@@ -1,0 +1,20 @@
+# User service. Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/d200x-button-box.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now d200x-button-box
+#
+# The uinput kernel module must be loaded at boot -- a user service cannot do it:
+#   echo uinput | sudo tee /etc/modules-load.d/uinput.conf
+
+[Unit]
+Description=D200x Button Box (Ulanzi deck -> virtual gamepad)
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/d200x-button-box run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

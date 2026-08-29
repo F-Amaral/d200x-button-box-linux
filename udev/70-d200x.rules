@@ -1,0 +1,31 @@
+# Ulanzi D200 / D200x -- give the logged-in user access to the deck and uinput.
+#
+# The filename MUST sort before systemd's 73-seat-late.rules, otherwise the
+# TAG+="uaccess" is added too late and no ACL is granted. Hence "70-".
+#
+# Install:
+#   sudo cp udev/70-d200x.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#   sudo udevadm trigger --attr-match=idVendor=2207
+#   # then PHYSICALLY unplug and replug the deck
+#
+# Verify:  getfacl /dev/bus/usb/<bus>/<dev>   should list your user.
+#
+# hidapi's PyPI wheel uses the libusb backend, so the node that must be
+# accessible is the USB device node (/dev/bus/usb/...), not /dev/hidrawN --
+# both are covered below.
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0019", TAG+="uaccess", MODE="0660"
+KERNEL=="hidraw*", ATTRS{idVendor}=="2207", ATTRS{idProduct}=="0019", TAG+="uaccess", MODE="0660"
+# evdev nodes of the deck's firmware keyboard (interface 1) -- the daemon grabs these
+SUBSYSTEM=="input", ATTRS{idVendor}=="2207", ATTRS{idProduct}=="0019", TAG+="uaccess", MODE="0660"
+
+# Virtual gamepad output node used by the daemon.
+KERNEL=="uinput", MODE="0660", TAG+="uaccess", OPTIONS+="static_node=uinput"
+
+# --- Fallback -----------------------------------------------------------------
+# If uaccess still does not grant access after a physical replug (some seat /
+# compositor setups), comment the two device lines above and use these instead:
+#
+# SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0019", MODE="0666"
+# KERNEL=="hidraw*", ATTRS{idVendor}=="2207", ATTRS{idProduct}=="0019", MODE="0666"

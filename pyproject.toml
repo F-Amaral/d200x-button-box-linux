@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "d200x-button-box"
+version = "0.1.0"
+description = "Use an Ulanzi D200x Stream Controller as a sim-racing button box on Linux"
+requires-python = ">=3.10"
+dependencies = [
+    "evdev>=1.6",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+d200x-button-box = "d200x_button_box.cli:main"
+
+[tool.setuptools]
+packages = ["d200x_button_box"]
