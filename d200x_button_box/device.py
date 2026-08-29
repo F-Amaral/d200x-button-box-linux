@@ -105,12 +105,17 @@ class Device:
         except OSError as e:
             log.warning("heartbeat write failed: %s", e)
 
-    def send_init(self, labels: dict[int, str] | None = None, quiet: bool = False) -> None:
+    def send_init(
+        self,
+        labels: dict[int, str] | None = None,
+        icons: dict[int, str] | None = None,
+        quiet: bool = False,
+    ) -> None:
         """Upload a button layout. Without this the device never reports input,
         and it drifts back to standalone mode unless this is repeated."""
         from .layout import build_set_buttons
 
-        payload = build_set_buttons(labels)
+        payload = build_set_buttons(labels, icons)
         try:
             for pkt in protocol.frame_packets(protocol.CMD_SET_BUTTONS, payload):
                 os.write(self._fd, b"\x00" + pkt)

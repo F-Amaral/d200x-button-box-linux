@@ -8,11 +8,11 @@
 #   echo uinput | sudo tee /etc/modules-load.d/uinput.conf
 
 [Unit]
-Description=D200x Button Box (Ulanzi deck -> virtual gamepad)
+Description=D200x Button Box (Ulanzi deck -> virtual gamepad + config API)
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/d200x-button-box run
+ExecStart=%h/.local/bin/d200x-buttonboxd
 Restart=on-failure
 RestartSec=3
 

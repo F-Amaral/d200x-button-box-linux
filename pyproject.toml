@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "evdev>=1.6",
     "PyYAML>=6.0",
+    "Pillow>=10",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +18,7 @@ dev = ["pytest>=7"]
 
 [project.scripts]
 d200x-button-box = "d200x_button_box.cli:main"
+d200x-buttonboxd = "d200x_button_box.cli:daemon_main"
 
 [tool.setuptools]
 packages = ["d200x_button_box"]

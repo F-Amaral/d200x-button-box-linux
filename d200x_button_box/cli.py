@@ -1,13 +1,12 @@
-"""d200x-button-box command-line entrypoint."""
+"""d200x-button-box command-line entrypoint (and the `d200x-buttonboxd` daemon)."""
 
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
-from pathlib import Path
 
-from .config import DEFAULT_PATH, Config, default_yaml
+from . import config
 
 
 def _setup_log(level: str) -> None:
@@ -19,21 +18,31 @@ def _setup_log(level: str) -> None:
 
 def cmd_run(args) -> int:
     _setup_log(args.log_level)
+    config.bootstrap()
     from .daemon import Daemon
 
-    Daemon(Config.load(args.config)).run()
+    store = config.ConfigStore()
+    if args.profile:
+        store.force_profile(args.profile)
+        store.resolve()
+    daemon = Daemon(store)
+
+    if not args.no_api:
+        try:
+            from .api import serve
+
+            serve(daemon, store.settings.api)  # background thread
+        except ImportError:
+            logging.getLogger(__name__).info("API not available yet -- daemon only")
+
+    daemon.run()
     return 0
 
 
 def cmd_debug(args) -> int:
-    """Dump every raw HID report plus the parser's best guess.
-
-    Use this the first time you plug the deck in: press each key and turn each
-    knob, and note which `index` / action each one produces. That is what the
-    `keys:` / `knobs:` sections of the config refer to.
-    """
+    """Dump every raw HID report plus the parser's best guess."""
     _setup_log("INFO")
-    import time
+    import time as _t
 
     from . import protocol
     from .device import Device
@@ -64,7 +73,7 @@ def cmd_debug(args) -> int:
                         guess = "(ack)"
                     else:
                         guess = "(unparsed)"
-                    emit(f"{time.strftime('%H:%M:%S')}  {raw[:16].hex(' ')}   ->  {guess}")
+                    emit(f"{_t.strftime('%H:%M:%S')}  {raw[:16].hex(' ')}   ->  {guess}")
     except KeyboardInterrupt:
         pass
     finally:
@@ -74,14 +83,22 @@ def cmd_debug(args) -> int:
     return 0
 
 
-def cmd_gen_config(args) -> int:
-    path = Path(args.config or DEFAULT_PATH)
-    if path.exists() and not args.force:
-        print(f"{path} already exists; pass --force to overwrite", file=sys.stderr)
-        return 1
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(default_yaml())
-    print(f"wrote {path}")
+def cmd_init(args) -> int:
+    """Create the config dir with settings.yaml + starter profiles."""
+    config.bootstrap()
+    print(f"config in {config.CONFIG_DIR}")
+    print(f"  settings: {config.SETTINGS_PATH}")
+    for name in config.list_profiles():
+        print(f"  profile:  {config.profile_path(name)}")
+    return 0
+
+
+def cmd_profiles(args) -> int:
+    config.bootstrap()
+    settings = config.Settings.load()
+    for name in config.list_profiles():
+        marker = " *" if name == settings.active_profile else ""
+        print(f"{name}{marker}")
     return 0
 
 
@@ -117,38 +134,50 @@ def cmd_status(args) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("-c", "--config", help=f"config path (default: {DEFAULT_PATH})")
+def _add_run_parser(sub) -> None:
+    r = sub.add_parser("run", help="run the daemon (deck -> virtual gamepad + API)")
+    r.add_argument("--log-level", default="INFO")
+    r.add_argument("--profile", help="force this profile instead of auto/settings")
+    r.add_argument("--no-api", action="store_true", help="do not start the HTTP API")
+    r.set_defaults(func=cmd_run)
 
+
+def build_daemon_parser() -> argparse.ArgumentParser:
+    """`d200x-buttonboxd [OPTIONS]` -- the run subcommand, flattened."""
+    p = argparse.ArgumentParser(prog="d200x-buttonboxd")
+    p.add_argument("--log-level", default="INFO")
+    p.add_argument("--profile", help="force this profile instead of auto/settings")
+    p.add_argument("--no-api", action="store_true", help="do not start the HTTP API")
+    p.set_defaults(func=cmd_run)
+    return p
+
+
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="d200x-button-box")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("run", parents=[common], help="run the daemon (deck -> virtual gamepad)")
-    r.add_argument("--log-level", default="INFO")
-    r.set_defaults(func=cmd_run)
+    _add_run_parser(sub)
 
-    d = sub.add_parser("debug", parents=[common],
-                       help="dump raw HID reports to discover your control ids")
+    d = sub.add_parser("debug", help="dump raw HID reports to discover your control ids")
     d.add_argument("--out", metavar="FILE", help="also write the report lines to FILE")
-    d.add_argument("--no-grab", action="store_true",
-                   help="do not grab the deck keyboard (factory macros will fire)")
+    d.add_argument("--no-grab", action="store_true", help="do not grab the deck keyboard")
     d.set_defaults(func=cmd_debug)
 
-    g = sub.add_parser("gen-config", parents=[common], help="write a starter config.yaml")
-    g.add_argument("--force", action="store_true")
-    g.set_defaults(func=cmd_gen_config)
-
-    sub.add_parser("status", parents=[common],
-                   help="check the deck is reachable").set_defaults(func=cmd_status)
-
-    sub.add_parser("enum", parents=[common],
-                   help="list the deck's HID interfaces + device-node perms").set_defaults(func=cmd_enum)
+    sub.add_parser("init", help="create settings.yaml + starter profiles").set_defaults(func=cmd_init)
+    sub.add_parser("profiles", help="list profiles").set_defaults(func=cmd_profiles)
+    sub.add_parser("enum", help="list the deck's HID interfaces + perms").set_defaults(func=cmd_enum)
+    sub.add_parser("status", help="check the deck is reachable").set_defaults(func=cmd_status)
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+def daemon_main(argv=None) -> int:
+    """Entry point for the `d200x-buttonboxd` console script."""
+    args = build_daemon_parser().parse_args(argv)
     return args.func(args)
 
 
