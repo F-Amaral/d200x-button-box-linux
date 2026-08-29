@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>D200x Button Box</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 40rem; }
+  pre { background: #1113; padding: 1rem; border-radius: 6px; overflow: auto; }
+  h1 { font-size: 1.2rem; }
+</style>
+<h1>D200x Button Box &mdash; API is up</h1>
+<p>The web UI is phase 3. For now this page just confirms the control API works.</p>
+<pre id="state">loading /api/state &hellip;</pre>
+<pre id="events">/api/events &hellip;</pre>
+<script>
+  fetch('api/state').then(r => r.json())
+    .then(s => document.getElementById('state').textContent = JSON.stringify(s, null, 2))
+    .catch(e => document.getElementById('state').textContent = 'error: ' + e);
+
+  const log = document.getElementById('events');
+  log.textContent = '';
+  new EventSource('api/events').onmessage = e => {
+    log.textContent = (e.data + '\n' + log.textContent).split('\n').slice(0, 20).join('\n');
+  };
+</script>

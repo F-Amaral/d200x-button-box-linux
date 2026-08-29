@@ -7,13 +7,14 @@ automatically when a known game process appears.
 from __future__ import annotations
 
 import logging
+import queue
 import signal
 import subprocess
 import threading
 import time
 
 from . import gamedetect, protocol
-from .config import ConfigStore, Profile, Settings
+from .config import ConfigStore, Profile, Settings, list_profiles
 from .device import Device
 from .gamepad import Gamepad
 from .keyboard import KeyboardSink
@@ -36,8 +37,50 @@ class Daemon:
         self._queued_profile: str | None = None      # profile: binding, applied next tick
         self._queued_page: str | None = None         # page: binding, applied next tick
         self._home_revert_at: float | None = None     # monotonic deadline to drop back to auto
+        self._force_reload = False
         self._run = True
-        self._on_profile_change: list = []  # callbacks(name) for the API layer
+        self._subs: list[queue.Queue] = []            # SSE subscribers (API layer)
+        self._httpd = None                            # set by api.serve()
+
+    # -- pub/sub for the API -------------------------------------------------
+    def subscribe(self, q: queue.Queue) -> None:
+        self._subs.append(q)
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        try:
+            self._subs.remove(q)
+        except ValueError:
+            pass
+
+    def _publish(self, event: dict) -> None:
+        for q in list(self._subs):
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                pass
+
+    def snapshot(self) -> dict:
+        return {
+            "device": {"connected": True, "path": getattr(self.dev, "path", None)},
+            "profile": {
+                "name": self.store.active_name,
+                "page": self._page,
+                "n_pages": self.profile.n_pages,
+                "pages": [p.name for p in self.profile.pages],
+                "forced": self.store._forced_profile,
+            },
+            "profiles": list_profiles(),
+        }
+
+    # -- requests from the API thread (applied in the main loop) -----------
+    def request_profile(self, spec: str) -> None:
+        self._queued_profile = spec
+
+    def request_page(self, spec: str) -> None:
+        self._queued_page = spec
+
+    def request_reload(self) -> None:
+        self._force_reload = True
 
     @property
     def settings(self) -> Settings:
@@ -103,6 +146,10 @@ class Daemon:
 
     # --- event routing -----------------------------------------------------
     def _on_event(self, ev: protocol.InputEvent) -> None:
+        if self._subs:
+            self._publish({"type": "input", "name": ev.name, "index": ev.index,
+                           "kind": ev.kind, "action": ev.action})
+
         home = self.settings.home
         if home.key is not None and ev.kind == "key" and ev.index == home.key:
             if ev.action == "press":
@@ -174,6 +221,7 @@ class Daemon:
         self._release_all()
         self.push_layout()
         log.info("page %d/%d", self._page + 1, n)
+        self._publish({"type": "page", "index": self._page, "n_pages": n})
 
     def set_profile(self, name: str | None) -> None:
         """Manual override from the API/CLI (None = back to auto/settings)."""
@@ -235,11 +283,12 @@ class Daemon:
         self._release_all()
         self.push_layout()
         log.info("active profile: %s (%d page(s))", self.store.active_name, self.profile.n_pages)
-        for cb in self._on_profile_change:
-            try:
-                cb(self.store.active_name)
-            except Exception:  # noqa: BLE001 - a bad callback must not kill the daemon
-                log.exception("profile-change callback failed")
+        self._publish({
+            "type": "profile",
+            "name": self.store.active_name,
+            "n_pages": self.profile.n_pages,
+            "pages": [p.name for p in self.profile.pages],
+        })
 
     # --- main loop -----------------------------------------------------
     def run(self) -> None:
@@ -279,8 +328,10 @@ class Daemon:
                 if now - last_detect > _DETECT_POLL:
                     detected = gamedetect.detect(self.settings.auto_detect)
                     last_detect = now
-                if now - last_reload > _RELOAD_POLL:
-                    if self.store.resolve(detected=detected):
+                if self._force_reload or now - last_reload > _RELOAD_POLL:
+                    force = self._force_reload
+                    self._force_reload = False
+                    if self.store.resolve(detected=detected, force_reload=force):
                         self._activate()
                     last_reload = now
                 if self.settings.heartbeat_seconds and now - last_beat > self.settings.heartbeat_seconds:
@@ -290,6 +341,8 @@ class Daemon:
                 time.sleep(0.005)
 
         self._release_all()
+        if self._httpd is not None:
+            self._httpd.shutdown()
         self.dev.close()
         self.pad.close()
         log.info("stopped")

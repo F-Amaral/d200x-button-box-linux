@@ -62,6 +62,11 @@ class Settings:
     def load(cls, path: Path | str | None = None) -> "Settings":
         path = Path(path or SETTINGS_PATH)
         raw = (yaml.safe_load(path.read_text()) if path.exists() else {}) or {}
+        return cls.from_raw(raw)
+
+    @classmethod
+    def from_raw(cls, raw: dict) -> "Settings":
+        raw = raw or {}
         dev = raw.get("device", {}) or {}
         pad = raw.get("gamepad", {}) or {}
         api = raw.get("api", {}) or {}
@@ -173,14 +178,36 @@ def _page_from_dict(raw: dict) -> Page:
     return page
 
 
-def load_profile(name: str) -> Profile:
-    path = profile_path(name)
-    raw = (yaml.safe_load(path.read_text()) if path.exists() else {}) or {}
+def profile_from_raw(name: str, raw: dict) -> Profile:
+    raw = raw or {}
     if raw.get("pages"):
         pages = [_page_from_dict(p or {}) for p in raw["pages"]]
     else:
-        pages = [_page_from_dict(raw)]  # legacy / single-page: flat keys+knobs
+        pages = [_page_from_dict(raw)]  # flat keys+knobs = single page
     return Profile(name=name, pages=pages or [Page()])
+
+
+def load_profile(name: str) -> Profile:
+    path = profile_path(name)
+    raw = (yaml.safe_load(path.read_text()) if path.exists() else {}) or {}
+    return profile_from_raw(name, raw)
+
+
+def write_settings_dict(raw: dict) -> None:
+    """Validate a settings dict by round-tripping through the dataclass, then save."""
+    Settings.from_raw(raw).save()
+
+
+def write_profile_dict(name: str, raw: dict) -> None:
+    save_profile(profile_from_raw(name, raw))
+
+
+def delete_profile(name: str) -> bool:
+    path = profile_path(name)
+    if path.exists():
+        path.unlink()
+        return True
+    return False
 
 
 def save_profile(prof: Profile) -> None:

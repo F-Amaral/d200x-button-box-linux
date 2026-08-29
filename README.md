@@ -35,6 +35,7 @@ Bind the **D200x Button Box** controller in your game's control settings.
 
 - [Installation](docs/installation.md) — dependencies, permissions, service, troubleshooting
 - [Configuration](docs/configuration.md) — settings, profiles, pages, bindings, the home button
+- [Control API](docs/api.md) — the daemon's HTTP + SSE API
 - [Hardware notes](docs/hardware.md) — the D200x, the wire protocol, firmware quirks, credits
 - [Roadmap](plans/roadmap.md) — what's done, what's next
 

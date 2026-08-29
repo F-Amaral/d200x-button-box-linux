@@ -25,17 +25,19 @@ Living doc. Move items between sections as they land.
 - Global **home** button (`settings.home`) with idle auto-revert
 - **Multi-page** profiles (`{page: next|prev|N}`), page switch releases held buttons
 - Split binaries: `d200x-buttonboxd` (daemon) + `d200x-button-box` (CLI)
-- `pytest -q` — parser, payload builder, config round-trips, event routing
 
-## Next — phase 2: control API
-- HTTP server in the daemon (stdlib `http.server`, no new dep)
-- REST: get/put settings, list/get/put profiles, activate profile, current state
-- SSE `/api/events`: stream input events (for "press a key to bind" in the GUI)
-- `POST /api/keys/<i>/preview`: temp-push an image to one key
-- serve static files (the web UI)
-- `api.host` / `api.port` / `api.token` from settings; localhost by default
+### Phase 2 — control API
+- HTTP + SSE server in the daemon (stdlib `http.server`, no new dep)
+- REST: `state`, `settings` (get/put), `profiles` (list/get/put/create/delete),
+  `activate`, `page`
+- SSE `/api/events`: input events + profile/page changes (press-to-bind)
+- static file serving from `webui/` (placeholder page for now)
+- `api.host` / `api.port` / `api.token`; localhost by default
+- verified on hardware (activate switches the deck live)
 
-## Next — phase 3: web UI
+- `pytest -q` — parser, payload builder, config round-trips, event routing, API
+
+### Phase 3 — web UI
 - Single page, vanilla JS, no build step, served by the daemon
 - Deck grid (keys + aux + knobs), per-control binding panel
 - Icon: file upload **or** generator (text + glyph + bg colour)
@@ -43,11 +45,13 @@ Living doc. Move items between sections as they land.
 - "Listen" → SSE → capture the next deck press
 - Device settings page
 - Reachable at `http://<rig-ip>:<port>/` for phone-on-LAN live edits
+- `POST /api/preview` — temp-push an icon to one key (icon picker feedback)
 
-## Next — phase 4: native wrapper (optional)
+### Phase 4 — native wrapper (optional)
 - PySide6 `QWebEngineView` + system tray, talking to the same API
 
 ## Backlog
+- `d200x-button-box` CLI subcommands that hit the API (activate / page / state)
 - Icon generator as a reusable module (used by API + GUI)
 - Per-key colour / multi-state icons
 - Live data on the wide status key (speed, lap, fuel) via a sim-telemetry feed
