@@ -25,8 +25,9 @@ class FakeDev:
     def __init__(self):
         self.inits = []
 
-    def send_init(self, page=None, icon_cfg=None, quiet=False):
+    def send_init(self, page=None, icon_cfg=None, quiet=False, force=False):
         self.inits.append(page)
+        return True
 
     def set_brightness(self, p):
         pass

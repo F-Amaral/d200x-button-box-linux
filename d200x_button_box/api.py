@@ -265,7 +265,8 @@ class Handler(BaseHTTPRequestHandler):
             q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
             style = {k: q[k] for k in layout.STYLE_KEYS if k in q}
             glyph = q.get("glyph") or (glyphs.label_glyph(q["label"]) if q.get("label") else None)
-            return self._raw(layout.render_icon(style, q.get("text") or q.get("label", ""), glyph), "image/png")
+            return self._raw(layout.render_icon(
+                style, q.get("text") or q.get("label", ""), glyph, q.get("caption", "")), "image/png")
 
         if seg == ["glyphs"] and method == "GET":
             from . import compose, glyphs, telltales
@@ -275,6 +276,10 @@ class Handler(BaseHTTPRequestHandler):
                 "aliases": glyphs.ALIASES,
                 "composed": list(compose.all_specs()),
                 "bases": telltales.names(),   # any tell-tale can be a compose base
+                # for the client-side symbol picker: our dashboard/ISO set, and
+                # the curated Material set as name -> codepoint (hex) for @font-face
+                "telltales": telltales.names(),
+                "material": {k: f"{v:x}" for k, v in glyphs.NAME_TO_CP.items()},
             })
 
         # --- icon editor: parametric composed icons -----------------

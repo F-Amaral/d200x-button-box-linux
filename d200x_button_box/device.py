@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import errno
 import glob
+import hashlib
 import logging
 import os
 import re
@@ -119,17 +120,29 @@ class Device:
         """Keep the deck in host mode. Send every ~2s."""
         self._write(b"\x00" + protocol.build_small_window(1, time.strftime("%H:%M:%S")))
 
-    def send_init(self, page=None, icon_cfg: dict | None = None, quiet: bool = False) -> None:
+    def send_init(self, page=None, icon_cfg: dict | None = None,
+                  quiet: bool = False, force: bool = False) -> bool:
         """Upload a button layout for `page` (a config.Page). Without this the
         device never reports input, and it drifts back to standalone mode unless
-        repeated."""
+        repeated.
+
+        Skips the upload (returns False) when the rendered payload is identical
+        to the last one sent — editing an action or a label that doesn't change
+        any icon shouldn't blank the screens for a redundant re-push. Pass
+        ``force=True`` for the periodic keep-in-host-mode re-send.
+        """
         from .layout import build_set_buttons
 
         payload = build_set_buttons(page, icon_cfg)
+        h = hashlib.blake2b(payload, digest_size=16).digest()
+        if not force and h == getattr(self, "_layout_hash", None):
+            return False
+        self._layout_hash = h
         for pkt in protocol.frame_packets(protocol.CMD_SET_BUTTONS, payload):
             self._write(b"\x00" + pkt)
         if not quiet:
             log.info("sent SET_BUTTONS (%d-byte payload); input should now stream", len(payload))
+        return True
 
     def poll(self) -> Iterator[protocol.InputEvent]:
         """Yield pending input events, then return."""

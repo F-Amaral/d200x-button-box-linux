@@ -42,6 +42,7 @@ class Daemon:
         self._home_revert_at: float | None = None     # monotonic deadline to drop back to auto
         self._reload_now = False
         self._repush = False
+        self._last_beat = 0.0
         self._run = True
         self._subs: list[queue.Queue] = []            # SSE subscribers (API layer)
         self._httpd = None                            # set by api.serve()
@@ -261,13 +262,16 @@ class Daemon:
         self._publish({"type": "device", "connected": False})
 
     # --- deck layout -----------------------------------------------------
-    def push_layout(self) -> None:
+    def push_layout(self, force: bool = False) -> None:
         if self.dev is None:
             return
         try:
-            self.dev.send_init(self.page, self.settings.icon, quiet=True)
+            wrote = self.dev.send_init(self.page, self.settings.icon, quiet=True, force=force)
         except DeviceGone:
             self._disconnect_device("write during layout push")
+            return
+        if wrote:
+            self._last_beat = 0.0  # redraw the clock now, don't wait for the heartbeat
 
     def set_page(self, spec: str | int) -> None:
         n = self.profile.n_pages
@@ -377,7 +381,7 @@ class Daemon:
             log.warning("D200x not connected -- API is up; retrying every %.0fs", _RECONNECT_POLL)
         log.info("running (profile: %s) -- ctrl-c to quit", self.store.active_name)
 
-        last_beat = last_reload = last_detect = last_conn = 0.0
+        self._last_beat = last_reload = last_detect = last_conn = 0.0
         detected: str | None = None
 
         while self._run:
@@ -406,9 +410,9 @@ class Daemon:
                     self._tick_hold(now)
                     self._tick_home(now, got_input)
 
-                    if self.settings.heartbeat_seconds and now - last_beat > self.settings.heartbeat_seconds:
+                    if self.settings.heartbeat_seconds and now - self._last_beat > self.settings.heartbeat_seconds:
                         self.dev.heartbeat()
-                        last_beat = now
+                        self._last_beat = now
                 except DeviceGone as e:
                     self._disconnect_device(str(e))
                     continue

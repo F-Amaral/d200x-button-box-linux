@@ -123,6 +123,16 @@ def test_games_endpoint(client):
     assert status == 200 and "lmu" in games and "path" in games["lmu"]
 
 
+def test_glyphs_endpoint(client):
+    call, _ = client
+    status, g = call("GET", "/api/glyphs")
+    assert status == 200
+    assert "wiper" in g["telltales"]            # the dashboard/ISO set for the picker
+    assert "home" in g["material"]              # curated Material set, name -> codepoint hex
+    assert int(g["material"]["home"], 16) > 0
+    assert "seat_fore" in g["composed"]
+
+
 def test_import_endpoint(client, tmp_path):
     import json as _json
 

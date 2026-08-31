@@ -124,6 +124,58 @@ def test_render_icon_glyph_and_text():
     assert glyphs.label_glyph("Wiper Speed") == "wiper"
 
 
+def test_send_init_skips_identical_payload():
+    from d200x_button_box import config
+    from d200x_button_box.device import Device
+
+    dev = Device.__new__(Device)          # bypass hardware open
+    writes = []
+    dev._write = lambda b: writes.append(b)
+
+    page = config.Page(keys={1: {"gamepad": 2, "label": "Pit"}})
+    assert dev.send_init(page, {}) is True
+    n = len(writes)
+    assert n > 0
+    assert dev.send_init(page, {}) is False        # identical -> skipped
+    assert len(writes) == n
+    assert dev.send_init(page, {}, force=True) is True   # forced re-send
+    assert len(writes) > n
+    # a real change pushes again
+    page.keys[1]["label"] = "Radio"
+    assert dev.send_init(page, {}) is True
+
+
+def test_resolve_key_icon_precedence_and_register():
+    from d200x_button_box import layout
+    from d200x_button_box.layout import DEFAULT_GAME_STYLE, DEFAULT_NAV_STYLE
+
+    game, nav = dict(DEFAULT_GAME_STYLE), dict(DEFAULT_NAV_STYLE)
+
+    # a shell command / raw keystroke is a "box" control -> nav (neutral) baseline
+    assert layout.is_box_binding({"command": "x"})
+    assert layout.is_box_binding({"key": "F13"})
+    assert not layout.is_box_binding({"gamepad": 3})
+
+    # explicit letters beat an action-derived glyph (command -> terminal)
+    a = layout.resolve_key_icon({"command": "x", "icon_text": "CC"}, None, game, nav)
+    b = layout.resolve_key_icon({"command": "x"}, None, game, nav)
+    assert a and b and a != b               # "CC" text vs the terminal glyph
+
+    # explicit glyph still wins over letters
+    c = layout.resolve_key_icon({"glyph": "wiper", "icon_text": "CC"}, None, game, nav)
+    d = layout.resolve_key_icon({"glyph": "wiper"}, None, game, nav)
+    assert c == d
+
+    # a picked / action-implied glyph carries the label as a caption under it;
+    # a label that merely *matched* a glyph by keyword does not
+    with_cap = layout.resolve_key_icon({"profile": "lmu", "label": "LMU"}, None, game, nav)
+    no_cap = layout.resolve_key_icon({"profile": "lmu"}, None, game, nav)
+    assert with_cap and no_cap and with_cap != no_cap
+    kw = layout.resolve_key_icon({"gamepad": 1, "label": "Wipers"}, None, game, nav)
+    picked = layout.resolve_key_icon({"gamepad": 1, "glyph": "wiper", "label": "Wipers"}, None, game, nav)
+    assert kw != picked   # keyword match -> plain icon; explicit pick -> icon + "Wipers"
+
+
 def test_iso_telltale_render_and_tint():
     import io as _io
 

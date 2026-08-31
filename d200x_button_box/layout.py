@@ -98,18 +98,56 @@ def _glyph_font(size: int):
     return ImageFont.truetype(str(glyphs.FONT_PATH), size)
 
 
-def render_icon(style: dict | None, text: str = "", glyph: str | None = None) -> bytes:
+def _draw_caption(d, text: str, font_name: str, colour) -> None:
+    """A small single line of text in the lower whitespace (glyph + name).
+
+    Leading/trailing decoration is dropped -- labels like ``-> LMU`` / ``→ Pit``
+    become just the name.
+    """
+    text = re.sub(r"^[\s\W_]+|[\s\W_]+$", "", " ".join((text or "").split()))
+    if not text:
+        return
+    S, max_w = ICON_SIZE, ICON_SIZE - 18
+    font = _text_font(font_name, 30)
+    if d.textlength(text, font=font) > max_w:
+        while len(text) > 1 and d.textlength(text + "…", font=font) > max_w:
+            text = text[:-1].rstrip()
+        text += "…"
+    w = d.textlength(text, font=font)
+    asc, desc = font.getmetrics()
+    d.text(((S - w) / 2, S - 20 - asc - desc), text, font=font, fill=colour)
+
+
+def render_icon(style: dict | None, text: str = "", glyph: str | None = None,
+                caption: str = "") -> bytes:
     """196x196 RGBA PNG.
 
     - a real ISO tell-tale (no frame -- the symbol IS the icon), OR
     - a Material glyph / text initials on a circle / rounded-square frame.
+
+    ``caption`` is a short label drawn small along the bottom, under a glyph or
+    tell-tale, so e.g. a profile-switch key shows both the icon and the target
+    name. Ignored when the icon is itself text (initials).
     """
     Image, ImageDraw, _ = _pil()
     s = merge_style(style)
     S = ICON_SIZE
+    cap = " ".join((caption or "").split())
 
     if glyph and telltales.has(glyph):
-        return _pad_png(telltales.tint(glyph, s["fg"], int(S * 0.86)), S)
+        scale = 0.66 if cap else 0.86
+        base = telltales.tint(glyph, s["fg"], int(S * scale))
+        if not cap:
+            return _pad_png(base, S)
+        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        with Image.open(io.BytesIO(base)) as sym:
+            sym = sym.convert("RGBA")
+            img.alpha_composite(sym, ((S - sym.size[0]) // 2, 4))
+        d = ImageDraw.Draw(img)
+        _draw_caption(d, cap, s["font"], s["fg"])
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
 
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -122,11 +160,14 @@ def render_icon(style: dict | None, text: str = "", glyph: str | None = None) ->
         d.ellipse(box, fill=fill, outline=s["border"], width=bw)
 
     if glyph and (cp := glyphs.codepoint(glyph)) is not None:
-        font = _glyph_font(112)
+        font = _glyph_font(88 if cap else 112)
         ch = chr(cp)
         tb = d.textbbox((0, 0), ch, font=font)
-        d.text(((S - (tb[2] - tb[0])) / 2 - tb[0], (S - (tb[3] - tb[1])) / 2 - tb[1]),
+        dy = -24 if cap else 0
+        d.text(((S - (tb[2] - tb[0])) / 2 - tb[0], (S - (tb[3] - tb[1])) / 2 - tb[1] + dy),
                ch, font=font, fill=s["fg"])
+        if cap:
+            _draw_caption(d, cap, s["font"], s["fg"])
     else:
         t = icon_initials(text)
         if t:
@@ -173,6 +214,12 @@ def is_nav_binding(binding: dict) -> bool:
     return "page" in binding or "profile" in binding
 
 
+def is_box_binding(binding: dict) -> bool:
+    """A 'box control' — nav / page / profile / shell command / raw keystroke.
+    Gets the neutral (nav) icon baseline; gamepad + empty keys are 'sim'."""
+    return is_nav_binding(binding) or "command" in binding or "key" in binding
+
+
 def resolve_key_icon(binding: dict, page_style: dict | None,
                      game_base: dict, nav_base: dict) -> bytes | None:
     binding = binding or {}
@@ -181,18 +228,29 @@ def resolve_key_icon(binding: dict, page_style: dict | None,
         if png:
             return png
 
-    nav = is_nav_binding(binding)
-    base = nav_base if nav else merge_style(game_base, page_style)
+    box = is_box_binding(binding)
+    base = nav_base if box else merge_style(game_base, page_style)
     style = merge_style(base, binding.get("icon_style"))
 
-    glyph = binding.get("glyph") or glyphs.action_glyph(binding)
-    if not glyph and not nav:
-        glyph = glyphs.label_glyph(binding.get("label", ""))
-    text = binding.get("icon_text") or binding.get("label") or ""
+    # explicit wins: a chosen glyph, else chosen letters, else derive one.
+    # a glyph the user picked (or one implied by the action, e.g. a profile
+    # switch) carries the label along as a small caption; a glyph the label
+    # itself matched does not (that would just repeat the label).
+    label = binding.get("label", "")
+    glyph, caption = binding.get("glyph"), ""
+    if glyph:
+        caption = label
+    elif not binding.get("icon_text"):
+        glyph = glyphs.action_glyph(binding)
+        if glyph:
+            caption = label
+        elif not is_nav_binding(binding):
+            glyph = glyphs.label_glyph(label)
+    text = binding.get("icon_text") or label or ""
     if not glyph and not text:
         return None
     try:
-        return render_icon(style, text=text, glyph=glyph)
+        return render_icon(style, text=text, glyph=glyph, caption=caption)
     except Exception as e:  # noqa: BLE001 - a font/Pillow hiccup must not break the push
         log.warning("icon render failed (%s / %s): %s", glyph, text, e)
         return None
