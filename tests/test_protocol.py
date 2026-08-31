@@ -62,18 +62,21 @@ def test_brightness_and_small_window_shapes():
     assert b"1|0|0|12:00:00|0" in sw
 
 
-def test_set_buttons_payload_valid_zip_with_labels():
-    payload = build_set_buttons({0: "TURN L", protocol.STATUS_KEY_INDEX: "STATUS"})
+def test_set_buttons_generates_icons_from_labels():
+    # every LCD key with a label -> a generated icon; status key stays clock-only
+    payload = build_set_buttons({0: "TURN L", 5: "PIT", protocol.STATUS_KEY_INDEX: "STATUS"})
     with zipfile.ZipFile(io.BytesIO(payload)) as z:
         manifest = json.loads(z.read("manifest.json"))
-    assert manifest["0_0"]["ViewParam"][0]["Text"] == "TURN L"
-    assert manifest["3_2"]["SmallViewMode"] == 2
-    assert set(manifest) == {f"{i % 5}_{i // 5}" for i in [*range(13), 13]}
+        names = z.namelist()
+    assert "Icon" in manifest["0_0"]["ViewParam"][0]
+    assert manifest["0_0"]["ViewParam"][0]["Icon"] in names
+    assert "Text" not in manifest["0_0"]["ViewParam"][0]     # icon carries the text now
+    assert "Icon" not in manifest["3_2"]["ViewParam"][0]      # status = no generated icon
     for i in range(protocol.PACKET_SIZE - 8, len(payload), protocol.PACKET_SIZE):
         assert payload[i] not in (0x00, 0x7C)
 
 
-def test_set_buttons_embeds_icon(tmp_path):
+def test_set_buttons_embeds_uploaded_icon(tmp_path):
     from PIL import Image
 
     p = tmp_path / "ic.png"
@@ -86,6 +89,21 @@ def test_set_buttons_embeds_icon(tmp_path):
         assert icon_ref in names
         with Image.open(io.BytesIO(z.read(icon_ref))) as img:
             assert img.size == (196, 196)
+
+
+def test_render_icon_shapes_and_style():
+    import io as _io
+
+    from PIL import Image
+
+    from d200x_button_box import layout
+
+    png = layout.render_icon({"shape": "round", "mode": "ring", "border": "#ff0000"}, "Pit Stop")
+    with Image.open(_io.BytesIO(png)) as img:
+        assert img.size == (196, 196) and img.mode == "RGBA"
+    assert layout.icon_initials("Traction Control Down") == "TCD"
+    assert layout.icon_initials("Headlights") == "HEA"
+    assert layout.merge_style({"fg": "#000"})["border"] == layout.DEFAULT_STYLE["border"]
 
 
 def test_settings_roundtrip(tmp_path):
@@ -125,6 +143,28 @@ def test_config_dir_env_override(tmp_path):
         capture_output=True, text=True, env={"D200X_CONFIG_DIR": str(tmp_path / "cfg"), "PATH": ""},
     ).stdout.strip()
     assert out == str(tmp_path / "cfg" / "settings.yaml")
+
+
+def test_page_style_roundtrip_and_gc(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path / "profiles")
+    (tmp_path / "profiles").mkdir()
+    (tmp_path / "icons").mkdir()
+    (tmp_path / "icons" / "aaaaaaaaaaaaaaaa.png").write_bytes(b"x")   # referenced
+    (tmp_path / "icons" / "bbbbbbbbbbbbbbbb.png").write_bytes(b"y")   # orphan
+
+    prof = config.Profile(name="p", pages=[config.Page(
+        style={"mode": "ring", "border": "#f00"},
+        keys={0: {"gamepad": 1, "icon": str(tmp_path / "icons" / "aaaaaaaaaaaaaaaa.png")}},
+    )])
+    config.save_profile(prof)
+    back = config.load_profile("p")
+    assert back.page(0).style == {"mode": "ring", "border": "#f00"}
+
+    removed = config.gc_icons()
+    assert removed == 1
+    assert (tmp_path / "icons" / "aaaaaaaaaaaaaaaa.png").exists()
+    assert not (tmp_path / "icons" / "bbbbbbbbbbbbbbbb.png").exists()
 
 
 def test_profile_save_load_single_and_multi_page(tmp_path, monkeypatch):

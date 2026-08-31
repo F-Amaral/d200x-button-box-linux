@@ -115,13 +115,32 @@
   <div class="dlg-actions"><button id="i_cancel" class="ghost">Close</button><button id="i_run" class="primary">Import</button></div>
 </dialog>
 
+<dialog id="iconGen">
+  <h3 id="ig_title">Icon</h3>
+  <div style="display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap">
+    <img id="ig_prev" width="110" height="110" style="background:#0d0f13;border:1px solid var(--line);border-radius:8px" alt="">
+    <div style="flex:1;min-width:200px">
+      <div class="fld"><label>Text</label><input id="ig_text" type="text" maxlength="4"><div class="hint">1–4 letters (empty = auto from the label)</div></div>
+      <div class="fld"><label>Style</label><select id="ig_mode"><option value="solid">solid fill</option><option value="ring">ring only</option></select></div>
+      <div class="fld"><label>Shape</label><select id="ig_shape"><option value="circle">circle</option><option value="round">rounded square</option></select></div>
+      <div class="fld"><label>Font</label><select id="ig_font"><option value="sans">sans</option><option value="condensed">condensed</option><option value="mono">mono</option><option value="liberation">liberation</option></select></div>
+      <div class="fld"><label>Border</label><input id="ig_border" type="color"></div>
+      <div class="fld"><label>Fill</label><input id="ig_fill" type="color"></div>
+      <div class="fld"><label>Text col.</label><input id="ig_fg" type="color"></div>
+      <div class="fld"><label></label><label style="display:flex;gap:.4rem;align-items:center"><input id="ig_sync" type="checkbox"> text colour = border</label></div>
+    </div>
+  </div>
+  <div class="dlg-actions"><button id="ig_reset" class="ghost">use page default</button><button id="ig_cancel" class="ghost">Cancel</button><button id="ig_use" class="primary">Use this icon</button></div>
+</dialog>
+
 <script>
 const KEY_ROWS=[[0,1,2,3,4],[5,6,7,8,9],[10,11,12,13]];
 const AUX_L=15,AUX_R=16,STATUS=13,KNOBS=[17,18,19];
 const ACTIONS=["none","gamepad","key","command","profile","page"];
 const ACTION_HINT={gamepad:"virtual joystick button the game binds",key:"keystroke (ydotool/xdotool)",command:"shell command on the daemon host",profile:"switch profile — or auto / next / prev / home",page:"switch page in this profile"};
 
-let S={name:null,profile:null,page:0,sel:null,listening:false,profiles:[],settings:null,es:null,dirty:false,autosave:false,homeKey:null,saveT:null};
+let S={name:null,profile:null,page:0,sel:null,listening:false,profiles:[],settings:null,es:null,dirty:false,autosave:false,homeKey:null,saveT:null,bindGame:null};
+let GAMES={}, GAME_CONTROLS={};
 
 const api=(p,o={})=>fetch("api/"+p,o).then(r=>{if(!r.ok)return r.text().then(t=>Promise.reject(t||r.status));const c=r.headers.get("content-type")||"";return c.includes("json")?r.json():r;});
 const $=s=>document.querySelector(s);
@@ -135,16 +154,22 @@ const knobB=(i,s)=>{const k=curPage().knobs[i]||(curPage().knobs[i]={});return k
 const actOf=b=>ACTIONS.find(a=>a!=="none"&&a in b)||"none";
 function setAct(b,act,val){for(const a of ACTIONS)if(a!=="none")delete b[a];if(act==="gamepad")b.gamepad=Number(val)||1;else if(act!=="none")b[act]=val??"";}
 const intKeys=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[Number(k),v||{}]));
-function normalize(name,raw){const mk=p=>({name:p.name||"",keys:intKeys(p.keys),knobs:intKeys(p.knobs)});const pg=raw.pages?raw.pages.map(mk):[mk(raw)];return{name,pages:pg.length?pg:[mk({})]};}
-function serialize(){const p=S.profile;const dump=g=>({...(g.name?{name:g.name}:{}),keys:g.keys,knobs:g.knobs});return(p.pages.length===1&&!p.pages[0].name)?dump(p.pages[0]):{pages:p.pages.map(dump)};}
+function normalize(name,raw){const mk=p=>({name:p.name||"",style:p.style||{},keys:intKeys(p.keys),knobs:intKeys(p.knobs)});const pg=raw.pages?raw.pages.map(mk):[mk(raw)];return{name,pages:pg.length?pg:[mk({})]};}
+function serialize(){
+  const p=S.profile;
+  const dump=g=>({...(g.name?{name:g.name}:{}),...(g.style&&Object.keys(g.style).length?{style:g.style}:{}),keys:g.keys,knobs:g.knobs});
+  return (p.pages.length===1&&!p.pages[0].name&&!Object.keys(p.pages[0].style||{}).length) ? dump(p.pages[0]) : {pages:p.pages.map(dump)};
+}
 
 // ---- load / save ---------------------------------------------------
 async function boot(){
   S.autosave=localStorage.getItem("d200x.autosave")==="1";
   $("#autosave").checked=S.autosave;
-  const st=await api("state"); setConn(st.device.connected);
+  const st=await api("state"); setConn(true); setDeck(st.device.connected);
   const pl=await api("profiles"); S.profiles=pl.profiles; S.name=pl.active;
   S.settings=await api("settings"); S.homeKey=S.settings.home.key;
+  GAMES=await api("games").catch(()=>({}));
+  S.bindGame=Object.entries(GAMES).find(([,g])=>g.can_write&&g.path)?.[0]||null;
   await loadProfile(S.name);
   connectSSE();
 }
@@ -163,13 +188,19 @@ async function save(){
 }
 
 // ---- SSE ----------------------------------------------------------
-function setConn(on){ $("#dot").classList.toggle("on",on); }
+function setConn(on){ $("#dot").classList.toggle("on",on); $("#dot").title=on?"daemon connected":"daemon offline"; }
+function setDeck(on){
+  let el=$("#deckwarn");
+  if(!on && !el){ el=document.createElement("span"); el.id="deckwarn"; el.textContent="⚠ deck disconnected"; el.style.cssText="color:var(--danger);font-size:12px;font-weight:600"; $("#status").after(el); }
+  else if(on && el){ el.remove(); }
+}
 function connectSSE(){
   S.es?.close();
   S.es=new EventSource("api/events");
   S.es.onmessage=e=>{
     const m=JSON.parse(e.data);
-    if(m.type==="state"){ setConn(true); }
+    if(m.type==="state"){ setConn(true); setDeck(m.device.connected); }
+    if(m.type==="device") setDeck(m.connected);
     if(m.type==="input") onInput(m);
     if(m.type==="profile" && m.name!==S.name && !S.dirty){ S.name=m.name; syncProfileSel(); loadProfile(m.name); }
     if(m.type==="page"){ /* device page; editor stays where the user is */ }
@@ -204,12 +235,25 @@ function renderTabs(){
     const b=el("button",{textContent:pg.name||("page "+(i+1))});
     b.classList.toggle("on",i===S.page);
     b.onclick=()=>{ S.page=i; S.sel=null; render(); api("page",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({page:i})}); };
+    b.ondblclick=()=>{ const n=prompt("Page name:",pg.name); if(n!==null){ pg.name=n||""; render(); touched(); } };
     tb.append(b);
   });
+  const gear=el("button",{textContent:"⚙",title:"this page: name + default icon style"});
+  gear.onclick=openPageStyle;
+  tb.append(gear);
 }
 function labelFor(id){ return id===STATUS?"status":id===AUX_L?"aux ◀":id===AUX_R?"aux ▶":"key "+id; }
 function iconURL(path){ const n=(path||"").split("/").pop(); return /^[0-9a-f]{16}\.png$/.test(n)?"api/icons/"+n:""; }
 function shortVal(b){ const a=actOf(b); if(a==="none")return""; if(a==="gamepad")return"btn "+b.gamepad+(b.momentary?" ·pulse":""); return a+": "+(b[a]??""); }
+const STYLE_KEYS=["mode","shape","fill","border","fg","font"];
+function mergedStyle(b){ return Object.assign({}, curPage().style||{}, b.icon_style||{}); }
+function previewURL(b){
+  if(iconURL(b.icon)) return iconURL(b.icon);
+  const text=b.icon_text||b.label; if(!text || b.icon) return "";
+  const s=mergedStyle(b);
+  const q=new URLSearchParams({text}); STYLE_KEYS.forEach(k=>{ if(s[k]) q.set(k,s[k]); });
+  return "api/icon-preview?"+q;
+}
 
 function cellFor(id,cls){
   const b=curPage().keys[id]||{};
@@ -217,9 +261,9 @@ function cellFor(id,cls){
   if(!Object.keys(b).length && id!==STATUS) c.classList.add("empty");
   if(S.sel&&S.sel.kind==="key"&&S.sel.index===id) c.classList.add("sel");
   if(id===S.homeKey) c.append(el("span",{class:"badge",textContent:"HOME"}));
-  const u=iconURL(b.icon);
-  if(u) c.append(el("img",{src:u}));
-  c.append(el("div",{class:"lbl",textContent:b.label||labelFor(id),title:b.label||""}));
+  const u=id===STATUS?iconURL(b.icon):previewURL(b);
+  if(u){ c.append(el("img",{src:u})); }
+  else { c.append(el("div",{class:"lbl",textContent:b.label||labelFor(id),title:b.label||""})); }
   const v=shortVal(b); if(v) c.append(el("div",{class:"v",textContent:v,title:v}));
   c.onclick=()=>selectControl("key",id);
   return c;
@@ -267,10 +311,47 @@ function actionBlock(binding,onChange){
       valFld.append(el("span"),row);
     }
     if(ACTION_HINT[a]) valFld.append(el("div",{class:"hint",textContent:ACTION_HINT[a]}));
+    if(a==="gamepad" && S.bindGame) valFld.append(gameBindRow(Number(binding.gamepad)||1));
   };
   sel.onchange=()=>{ setAct(binding,sel.value,sel.value==="gamepad"?1:""); rebuild(); onChange(); };
   rebuild();
   wrap.append(el("div",{class:"fld"},[el("label",{textContent:"action"}),sel]),valFld);
+  return wrap;
+}
+
+// "bind this button in <game>" — writes the game's own controller config
+async function ensureControls(game){
+  if(!(game in GAME_CONTROLS)) GAME_CONTROLS[game]=await api("games/"+game+"/controls").catch(()=>null);
+  return GAME_CONTROLS[game];
+}
+function gameBindRow(button){
+  const game=S.bindGame;
+  const wrap=el("div"); wrap.style.gridColumn="1 / -1";
+  const head=el("div",{class:"hint",style:"margin-top:.4rem",textContent:"bind this button in "+game.toUpperCase()+" (game must be closed):"});
+  const box=el("div",{style:"display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-top:.2rem"});
+  const sel=el("select"); sel.append(el("option",{textContent:"…"}));
+  const go=el("button",{class:"ghost",textContent:"apply"});
+  const msg=el("span",{class:"hint"});
+  box.append(sel,go,msg); wrap.append(head,box);
+  ensureControls(game).then(info=>{
+    sel.innerHTML="";
+    if(!info){ sel.append(el("option",{textContent:"(game config not found)"})); go.disabled=true; return; }
+    if(!info.device_present){ sel.append(el("option",{textContent:"— bind any control to the deck in-game once first —"})); go.disabled=true; return; }
+    sel.append(el("option",{value:"",textContent:"— not bound —"}));
+    const cur=Object.entries(info.bound).find(([,b])=>b===button)?.[0]||"";
+    info.controls.forEach(c=>sel.append(el("option",{value:c,textContent:c,selected:c===cur})));
+  });
+  go.onclick=async()=>{
+    const info=GAME_CONTROLS[game]||{bound:{}};
+    const prev=Object.entries(info.bound).find(([,b])=>b===button)?.[0];
+    const next=sel.value;
+    msg.textContent="…"; msg.style.color="var(--mut)";
+    try{
+      if(prev && prev!==next) await api("games/"+game+"/bind",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({control:prev,clear:true})});
+      if(next) await api("games/"+game+"/bind",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({control:next,button})});
+      GAME_CONTROLS[game]=undefined; msg.textContent="saved"; msg.style.color="var(--ok)";
+    }catch(e){ msg.textContent=String(e).slice(0,80); msg.style.color="var(--danger)"; }
+  };
   return wrap;
 }
 
@@ -295,18 +376,26 @@ function renderEditor(){
     const iconWrap=el("div",{class:"fld"});
     iconWrap.append(el("label",{textContent:"icon"}));
     const iconCtl=el("div",{style:"display:flex;gap:.5rem;align-items:center;flex-wrap:wrap"});
-    const u=iconURL(b.icon);
-    if(u) iconCtl.append(el("img",{src:u,style:"width:40px;height:40px;object-fit:contain;border:1px solid var(--line);border-radius:6px"}));
-    const file=el("input",{type:"file",accept:"image/*"});
+    const pu=previewURL(b);
+    if(pu) iconCtl.append(el("img",{src:pu,style:"width:40px;height:40px;object-fit:contain;border:1px solid var(--line);border-radius:6px"}));
+    const style=el("button",{class:"ghost",textContent:b.icon?"image":"style"});
+    style.onclick=()=>openIconGen(b);
+    iconCtl.append(style);
+    const file=el("input",{type:"file",accept:"image/*",style:"max-width:11rem"});
     file.onchange=async()=>{
       if(!file.files[0])return;
       const buf=await file.files[0].arrayBuffer();
       const r=await api("icons",{method:"POST",headers:{"content-type":"image/png"},body:buf});
-      b.icon=r.path; renderEditor(); renderDeck(); touched();
+      b.icon=r.path; delete b.icon_style; renderEditor(); renderDeck(); touched();
     };
     iconCtl.append(file);
-    if(b.icon){ const clr=el("button",{class:"ghost",textContent:"remove"}); clr.onclick=()=>{ delete b.icon; renderEditor(); renderDeck(); touched(); }; iconCtl.append(clr); }
+    if(b.icon||b.icon_style||b.icon_text){
+      const clr=el("button",{class:"ghost",textContent:"reset"});
+      clr.onclick=()=>{ delete b.icon; delete b.icon_style; delete b.icon_text; renderEditor(); renderDeck(); touched(); };
+      iconCtl.append(clr);
+    }
     iconWrap.append(iconCtl);
+    iconWrap.append(el("div",{class:"hint",style:"grid-column:2",textContent:b.icon?"custom image":"auto-generated — 'style' to tweak, or upload an image"}));
     g2.append(iconWrap);
     if(index===AUX_L||index===AUX_R) g2.append(el("div",{class:"fld"},[el("span"),el("div",{class:"hint",textContent:"this button has no screen; label & icon are ignored on the device"})]));
     e.append(g2);
@@ -355,9 +444,8 @@ $("#s_save").onclick=async()=>{
 };
 
 // ---- import dialog -------------------------------------------
-let GAMES={};
 async function openImport(){
-  GAMES=await api("games").catch(()=>({}));
+  if(!Object.keys(GAMES).length) GAMES=await api("games").catch(()=>({}));
   const g=$("#i_game"); g.innerHTML="";
   Object.keys(GAMES).forEach(k=>g.append(el("option",{value:k,textContent:k.toUpperCase(),selected:true})));
   $("#i_report").hidden=true;
@@ -382,6 +470,58 @@ $("#i_run").onclick=async()=>{
     $("#i_report").textContent=lines.join("\n"); $("#i_report").hidden=false;
     await loadProfile(S.name);
   }catch(e){ $("#i_report").textContent="import failed: "+e; $("#i_report").hidden=false; }
+};
+
+// ---- icon generator (server-rendered preview; sets icon_style / icon_text) --
+let IG_TARGET=null, IG_ONSAVE=null;
+const IG_DEFAULTS={mode:"solid",shape:"circle",fill:"#1b1f26",border:"#4a9eff",fg:"#ffffff",font:"sans"};
+function igStyle(){
+  return {mode:$("#ig_mode").value,shape:$("#ig_shape").value,font:$("#ig_font").value,
+          border:$("#ig_border").value,fill:$("#ig_fill").value,fg:$("#ig_fg").value};
+}
+function igPreview(){
+  const s=igStyle(); const q=new URLSearchParams(s);
+  q.set("text",$("#ig_text").value||(IG_TARGET&&IG_TARGET.label)||"AB");
+  $("#ig_prev").src="api/icon-preview?"+q;
+}
+let IG_BASE=IG_DEFAULTS;
+// openIconStyle(effectiveStyle, onSave(styleDiff, text), title, {noText, baseline})
+function openIconStyle(eff, onSave, title, opts={}){
+  IG_ONSAVE=onSave; IG_BASE=opts.baseline||Object.assign({}, IG_DEFAULTS, curPage().style||{});
+  const s=Object.assign({}, IG_DEFAULTS, curPage().style||{}, eff.style||eff.icon_style||eff);
+  $("#ig_title").textContent=title||"Icon style";
+  $("#ig_text").closest(".fld").style.display=opts.noText?"none":"";
+  $("#ig_text").value=eff.icon_text||"";
+  $("#ig_mode").value=s.mode; $("#ig_shape").value=s.shape; $("#ig_font").value=s.font;
+  $("#ig_border").value=s.border; $("#ig_fill").value=s.fill; $("#ig_fg").value=s.fg;
+  $("#ig_sync").checked=false;
+  igPreview();
+  $("#iconGen").showModal();
+}
+function openIconGen(binding){
+  openIconStyle(binding,(style,text)=>{
+    if(Object.keys(style).length) binding.icon_style=style; else delete binding.icon_style;
+    if(text) binding.icon_text=text; else delete binding.icon_text;
+    delete binding.icon;  // generated style wins; clear any uploaded file ref
+    renderEditor(); renderDeck(); touched();
+  },"Key icon");
+}
+function openPageStyle(){
+  const pg=curPage();
+  openIconStyle(pg.style||{},(style)=>{ if(Object.keys(style).length) pg.style=style; else delete pg.style; renderDeck(); touched(); },
+    "Page "+(S.page+1)+" default icon style",{noText:true,baseline:IG_DEFAULTS});
+}
+["ig_text","ig_mode","ig_shape","ig_font","ig_border","ig_fill","ig_fg"].forEach(id=>{
+  $("#"+id).oninput=$("#"+id).onchange=()=>{ if($("#ig_sync").checked&&id==="ig_border") $("#ig_fg").value=$("#ig_border").value; igPreview(); };
+});
+$("#ig_sync").onchange=()=>{ if($("#ig_sync").checked){ $("#ig_fg").value=$("#ig_border").value; igPreview(); } };
+$("#ig_reset").onclick=()=>{ IG_ONSAVE({}, ""); $("#iconGen").close(); };
+$("#ig_cancel").onclick=()=>$("#iconGen").close();
+$("#ig_use").onclick=()=>{
+  const st=igStyle(); const out={};
+  for(const k of STYLE_KEYS) if(st[k]!==undefined && st[k]!==IG_BASE[k]) out[k]=st[k];
+  IG_ONSAVE(out, $("#ig_text").value.trim());
+  $("#iconGen").close();
 };
 
 // ---- header wiring -------------------------------------------

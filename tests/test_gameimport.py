@@ -57,3 +57,40 @@ def test_apply_labels_overwrite():
     prof = config.Profile(name="t", pages=[config.Page(keys={0: {"gamepad": 1, "label": "old"}})])
     gameimport.apply_labels(prof, {1: ["New"]}, overwrite=True)
     assert prof.pages[0].keys[0]["label"] == "New"
+
+
+def test_lmu_controls_and_bind_roundtrip(tmp_path):
+    import json
+
+    tree = _lmu_tree(tmp_path)
+    f = tree / "UserData" / "player" / "direct input.json"
+
+    info = gameimport.lmu_controls(tree)
+    assert info["device_present"] is True
+    assert "Headlights" in info["controls"] and "Brake" in info["controls"]
+    assert info["bound"]["Headlights"] == 1
+
+    # bind "Brake" (currently on the wheel) to our button 5
+    res = gameimport.lmu_bind(tree, "Brake", 5)
+    assert res["ok"]
+    data = json.loads(f.read_text())
+    assert data["Input"]["Brake"] == {"device": "D200x Button Box-ABC123", "id": 5 + 31}
+    assert (tree / "UserData" / "player" / "direct input.json.d200x-bak").is_file()
+
+    # clear it
+    gameimport.lmu_bind(tree, "Brake", None)
+    assert "Brake" not in json.loads(f.read_text())["Input"]
+
+
+def test_lmu_bind_refuses_when_device_absent(tmp_path):
+    import json
+
+    d = tmp_path / "UserData" / "player"
+    d.mkdir(parents=True)
+    (d / "direct input.json").write_text(json.dumps({"Devices": {}, "Input": {"Brake": {}}}))
+    try:
+        gameimport.lmu_bind(tmp_path, "Brake", 1)
+    except ValueError as e:
+        assert "not in the game's config" in str(e)
+        return
+    raise AssertionError("expected ValueError")

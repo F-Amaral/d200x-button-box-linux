@@ -115,7 +115,36 @@ Each key/knob-event binding has exactly one action:
 Plus optional, for the LCD key:
 
 - `label: "PIT"` — text on the key
-- `icon: /path/to.png` — image, auto-resized to 196×196
+- `icon: /path/to.png` — an uploaded image (auto-resized to 196×196)
+- `icon_text: "PIT"` — override the auto initials on a generated icon
+- `icon_style: {…}` — per-key overrides of the page style (below)
+
+## Key icons
+
+Every LCD key with a label gets an icon so the deck never shows bare text on
+black. Resolution order: an uploaded `icon:` image → otherwise a **generated**
+one (initials of `icon_text` or `label` on a shape).
+
+Generated-icon style is a merge of the built-in defaults, the page's `style`,
+and the key's `icon_style`:
+
+```yaml
+# a page with its own default look
+style: {mode: ring, shape: circle, border: "#4a9eff", fill: "#1b1f26", fg: "#ffffff", font: sans}
+keys:
+  0: {gamepad: 1, label: "Pit", icon_text: "PIT"}
+  1: {gamepad: 2, label: "Radio", icon_style: {mode: solid, fill: "#c0392b"}}
+```
+
+- `mode`: `solid` (filled) or `ring` (outline only, dark centre)
+- `shape`: `circle` or `round`
+- `border` / `fill` / `fg`: hex colours
+- `font`: `sans` / `condensed` / `mono` / `liberation`
+
+In the web UI: the **⚙** next to the page tabs edits the page style + name; the
+**style** button in a key's editor sets a per-key override; **upload an image**
+for a real picture. Uploaded images that no profile references any more are
+cleaned from `icons/` automatically.
 
 Knobs take `left` / `right` / `press`, each a binding:
 
@@ -160,6 +189,18 @@ that uses that gamepad button.
 - Buttons bound in-game that aren't on any deck control are listed in the
   import report so you can assign them.
 - `overwrite: false` keeps labels you typed by hand.
+
+## Bind-to-game (the reverse)
+
+For LMU you can also **write** the game's controller config from the web UI:
+select a key with a `gamepad` binding, pick a control name in the "bind this
+button in LMU" dropdown, apply. It writes `Input[control] = {device, id}` into
+`direct input.json` (backup saved as `.d200x-bak`).
+
+- **Close the game first** — rF2/LMU reads that file at startup. The daemon
+  refuses the write while the game process is running.
+- Bind any one control to the deck inside LMU once before using this, so the
+  game has recorded the device's id.
 
 ## The home button
 

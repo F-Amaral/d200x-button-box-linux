@@ -35,15 +35,17 @@ def find_keyboards() -> list[evdev.InputDevice]:
 
 
 class KeyboardSink:
-    """Context manager: EVIOCGRAB the deck's keyboard nodes, ungrab on exit."""
+    """EVIOCGRAB the deck's keyboard evdev nodes so its firmware macros go
+    nowhere. Usable as a context manager (for `debug`) or via grab()/release()
+    (the daemon re-grabs after every reconnect, since the node numbers change)."""
 
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
         self._grabbed: list[evdev.InputDevice] = []
 
-    def __enter__(self) -> "KeyboardSink":
-        if not self.enabled:
-            return self
+    def grab(self) -> None:
+        if not self.enabled or self._grabbed:
+            return
         devs = find_keyboards()
         if not devs:
             log.warning(
@@ -51,7 +53,7 @@ class KeyboardSink:
                 "still reach the desktop. Install the SUBSYSTEM==\"input\" udev "
                 "line and replug, or add yourself to the 'input' group."
             )
-            return self
+            return
         for dev in devs:
             try:
                 dev.grab()
@@ -61,10 +63,9 @@ class KeyboardSink:
                 log.warning("could not grab %s: %s", dev.path, e)
                 dev.close()
         if self._grabbed:
-            log.info("firmware key macros suppressed while running")
-        return self
+            log.info("firmware key macros suppressed")
 
-    def __exit__(self, *_exc) -> None:
+    def release(self) -> None:
         for dev in self._grabbed:
             try:
                 dev.ungrab()
@@ -72,3 +73,10 @@ class KeyboardSink:
                 pass
             dev.close()
         self._grabbed.clear()
+
+    def __enter__(self) -> "KeyboardSink":
+        self.grab()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.release()

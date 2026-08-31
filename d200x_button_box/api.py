@@ -190,11 +190,34 @@ class Handler(BaseHTTPRequestHandler):
             from . import gameimport
 
             found = gameimport.available_games()
-            merged = {g: {"path": d.settings.games.get(g) or info["path"]}
+            merged = {g: {"path": d.settings.games.get(g) or info["path"], "can_write": info.get("can_write", False)}
                       for g, info in found.items()}
             for g, p in d.settings.games.items():
-                merged.setdefault(g, {"path": p})
+                merged.setdefault(g, {"path": p, "can_write": False})
             return self._json(merged)
+
+        if len(seg) == 3 and seg[0] == "games" and seg[2] == "controls" and method == "GET":
+            from . import gameimport
+
+            game = seg[1]
+            path = d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
+            if not path:
+                return self._json({"error": f"no install path for {game}"}, 400)
+            return self._json(gameimport.game_controls(game, path))
+
+        if len(seg) == 3 and seg[0] == "games" and seg[2] == "bind" and method == "POST":
+            from . import gamedetect, gameimport
+
+            game, body = seg[1], self._read_body()
+            path = body.get("path") or d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
+            if not path:
+                return self._json({"error": f"no install path for {game}"}, 400)
+            needles = d.settings.auto_detect.get(game)
+            if needles and gamedetect.detect({game: needles}):
+                return self._json({"error": f"{game} is running -- close it first (it reads its config at startup)"}, 409)
+            control = body["control"]
+            button = None if body.get("clear") else int(body["button"])
+            return self._json(gameimport.game_bind(game, path, control, button))
 
         if seg == ["profiles"] and method == "GET":
             return self._json({"profiles": config.list_profiles(), "active": d.store.active_name})
@@ -224,6 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(config.load_profile(name).to_dict())
             if method == "PUT":
                 config.write_profile_dict(name, self._read_body())
+                config.gc_icons()
                 d.request_reload()
                 return self._json({"ok": True})
             if method == "POST":
@@ -231,7 +255,16 @@ class Handler(BaseHTTPRequestHandler):
                     config.save_profile(config.default_profile(name))
                 return self._json({"ok": True, "created": True})
             if method == "DELETE":
-                return self._json({"ok": config.delete_profile(name)})
+                ok = config.delete_profile(name)
+                config.gc_icons()
+                return self._json({"ok": ok})
+
+        if seg == ["icon-preview"] and method == "GET":
+            from . import layout
+
+            q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+            style = {k: q[k] for k in layout.STYLE_KEYS if k in q}
+            return self._raw(layout.render_icon(style, q.get("text", "")), "image/png")
 
         if seg == ["icons"] and method == "POST":
             return self._json(_save_icon(self._read_raw_body()))

@@ -25,8 +25,8 @@ class FakeDev:
     def __init__(self):
         self.inits = []
 
-    def send_init(self, labels=None, icons=None, quiet=False):
-        self.inits.append((labels or {}, icons or {}))
+    def send_init(self, page=None, quiet=False):
+        self.inits.append(page)
 
     def set_brightness(self, p):
         pass
@@ -120,7 +120,7 @@ def test_profile_switch_repushes_layout(tmp_path, monkeypatch):
     d.dev = FakeDev()
     d.set_profile("lmu")
     assert d.store.active_name == "lmu"
-    assert d.dev.inits and d.dev.inits[-1][0].get(0) == "PIT"
+    assert d.dev.inits and d.dev.inits[-1].labels().get(0) == "PIT"
 
     d.set_profile("nope")            # missing -> ignored, stays on lmu
     assert d.store.active_name == "lmu"
@@ -191,12 +191,54 @@ def test_pages_cycle_and_repush(tmp_path, monkeypatch):
 
     d.set_page("next")
     assert d.page.name == "b"
-    assert d.dev.inits[-1][0] == {0: "B"}      # re-pushed page b labels
+    assert d.dev.inits[-1].labels() == {0: "B"}      # re-pushed page b
     d._on_event(InputEvent(0, "key", "press", b""))
     assert pad.events[-1] == ("press", 2)      # page b -> button 2
 
     d.set_page("next")                          # wraps back to a
     assert d.page.name == "a"
+
+
+def test_starts_without_a_device_and_reconnects(monkeypatch):
+    from d200x_button_box import daemon as dmod
+
+    d, _ = _daemon()
+    d.dev = None  # no device at startup
+
+    attempts = {"n": 0}
+
+    class FlakyDevice(FakeDev):
+        def __init__(self):
+            super().__init__()
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError("not found")
+            self.path = "/dev/hidraw9"
+
+    monkeypatch.setattr(dmod, "Device", FlakyDevice)
+    d._kbd.enabled = False  # don't touch real evdev in tests
+
+    assert d._connect_device() is False and d.dev is None
+    assert d._connect_device() is True and d.dev is not None
+    assert d.snapshot()["device"]["connected"] is True
+
+    d._disconnect_device("test")
+    assert d.dev is None and d.snapshot()["device"]["connected"] is False
+
+
+def test_device_gone_during_layout_push_disconnects(monkeypatch):
+    from d200x_button_box.device import DeviceGone
+
+    d, _ = _daemon()
+    d._kbd.enabled = False
+
+    class DyingDev(FakeDev):
+        def send_init(self, *a, **k):
+            raise DeviceGone("write: ENODEV")
+
+    d.dev = DyingDev()
+    d.push_layout()
+    assert d.dev is None  # push_layout caught DeviceGone and disconnected
 
 
 def test_page_switch_releases_held_button():

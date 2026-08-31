@@ -9,8 +9,8 @@
 ## Install
 
 ```bash
-git clone <this repo> ~/Projetos/d200x-button-box
-cd ~/Projetos/d200x-button-box
+git clone <this repo> d200x-button-box
+cd d200x-button-box
 python -m venv .venv && . .venv/bin/activate
 pip install -e .
 ```

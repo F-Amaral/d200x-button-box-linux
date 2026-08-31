@@ -15,22 +15,24 @@ import time
 
 from . import gamedetect, protocol
 from .config import ConfigStore, Profile, Settings, list_profiles
-from .device import Device
+from .device import Device, DeviceGone
 from .gamepad import Gamepad
 from .keyboard import KeyboardSink
 
 log = logging.getLogger(__name__)
 
-_RELOAD_POLL = 1.0   # seconds between config-file mtime checks
-_DETECT_POLL = 3.0   # seconds between game-process scans
+_RELOAD_POLL = 1.0     # seconds between config-file mtime checks
+_DETECT_POLL = 3.0     # seconds between game-process scans
+_RECONNECT_POLL = 2.0  # seconds between device reconnect attempts
 
 
 class Daemon:
     def __init__(self, store: ConfigStore | None = None, dev=None, pad=None) -> None:
         self.store = store or ConfigStore()
         s = self.store.settings
-        self.dev = dev or Device()
+        self.dev: Device | None = dev            # opened lazily / on reconnect
         self.pad = pad or Gamepad(s.gamepad_buttons, s.gamepad_name)
+        self._kbd = KeyboardSink(enabled=s.grab_keyboard)
         self._pending: list[tuple[float, int]] = []  # (release_at_monotonic, button)
         self._held: set[int] = set()                  # gamepad buttons held down right now
         self._page = 0
@@ -61,7 +63,7 @@ class Daemon:
 
     def snapshot(self) -> dict:
         return {
-            "device": {"connected": True, "path": getattr(self.dev, "path", None)},
+            "device": {"connected": self.dev is not None, "path": getattr(self.dev, "path", None)},
             "profile": {
                 "name": self.store.active_name,
                 "page": self._page,
@@ -197,9 +199,41 @@ class Daemon:
         self._pending.clear()
         self._held.clear()
 
+    # --- device connect / reconnect ------------------------------------
+    def _connect_device(self) -> bool:
+        try:
+            self.dev = Device()
+        except (RuntimeError, DeviceGone, OSError):
+            return False
+        self._kbd.grab()
+        try:
+            self.dev.send_init(self.page)
+            if self.settings.brightness is not None:
+                self.dev.set_brightness(self.settings.brightness)
+        except DeviceGone:
+            self._disconnect_device("failed right after opening")
+            return False
+        log.info("device connected (%s)", self.dev.path)
+        self._publish({"type": "device", "connected": True})
+        return True
+
+    def _disconnect_device(self, reason: str) -> None:
+        log.warning("device lost: %s", reason)
+        if self.dev is not None:
+            self.dev.close()
+        self.dev = None
+        self._kbd.release()
+        self._release_all()
+        self._publish({"type": "device", "connected": False})
+
     # --- deck layout -----------------------------------------------------
     def push_layout(self) -> None:
-        self.dev.send_init(self.page.labels(), self.page.icons(), quiet=True)
+        if self.dev is None:
+            return
+        try:
+            self.dev.send_init(self.page, quiet=True)
+        except DeviceGone:
+            self._disconnect_device("write during layout push")
 
     def set_page(self, spec: str | int) -> None:
         n = self.profile.n_pages
@@ -299,51 +333,64 @@ class Daemon:
         except ValueError:
             pass  # not the main thread (test harness / embedded)
 
-        self.dev.send_init(self.page.labels(), self.page.icons())
-        if self.settings.brightness is not None:
-            self.dev.set_brightness(self.settings.brightness)
+        if self.dev is None and not self._connect_device():
+            log.warning("D200x not connected -- API is up; retrying every %.0fs", _RECONNECT_POLL)
         log.info("running (profile: %s) -- ctrl-c to quit", self.store.active_name)
 
-        last_beat = last_reload = last_detect = 0.0
+        last_beat = last_reload = last_detect = last_conn = 0.0
         detected: str | None = None
 
-        with KeyboardSink(enabled=self.settings.grab_keyboard):
-            while self._run:
-                got_input = False
-                for ev in self.dev.poll():
-                    got_input = True
-                    log.debug("input: %s %s", ev.name, ev.action)
-                    self._on_event(ev)
-                self._drain_pending()
+        while self._run:
+            now = time.monotonic()
 
-                if self._queued_profile is not None:
-                    self._apply_profile_binding(self._queued_profile)
-                    self._queued_profile = None
-                if self._queued_page is not None:
-                    self.set_page(self._queued_page)
-                    self._queued_page = None
+            if self.dev is None:
+                if now - last_conn > _RECONNECT_POLL:
+                    last_conn = now
+                    self._connect_device()
+            else:
+                try:
+                    got_input = False
+                    for ev in self.dev.poll():
+                        got_input = True
+                        log.debug("input: %s %s", ev.name, ev.action)
+                        self._on_event(ev)
+                    self._drain_pending()
 
-                now = time.monotonic()
-                self._tick_home(now, got_input)
+                    if self._queued_profile is not None:
+                        self._apply_profile_binding(self._queued_profile)
+                        self._queued_profile = None
+                    if self._queued_page is not None:
+                        self.set_page(self._queued_page)
+                        self._queued_page = None
 
-                if now - last_detect > _DETECT_POLL:
-                    detected = gamedetect.detect(self.settings.auto_detect)
-                    last_detect = now
-                if self._reload_now or now - last_reload > _RELOAD_POLL:
-                    self._reload_now = False
-                    if self.store.resolve(detected=detected):
-                        self._activate()
-                    last_reload = now
-                if self.settings.heartbeat_seconds and now - last_beat > self.settings.heartbeat_seconds:
-                    self.dev.heartbeat()
-                    last_beat = now
+                    self._tick_home(now, got_input)
 
-                time.sleep(0.005)
+                    if self.settings.heartbeat_seconds and now - last_beat > self.settings.heartbeat_seconds:
+                        self.dev.heartbeat()
+                        last_beat = now
+                except DeviceGone as e:
+                    self._disconnect_device(str(e))
+                    continue
+
+            # config / game-detect polling happens regardless of device state
+            if now - last_detect > _DETECT_POLL:
+                detected = gamedetect.detect(self.settings.auto_detect)
+                last_detect = now
+            if self._reload_now or now - last_reload > _RELOAD_POLL:
+                self._reload_now = False
+                if self.store.resolve(detected=detected):
+                    self._kbd.enabled = self.settings.grab_keyboard
+                    self._activate()
+                last_reload = now
+
+            time.sleep(0.02 if self.dev is None else 0.005)
 
         self._release_all()
         if self._httpd is not None:
             self._httpd.shutdown()
-        self.dev.close()
+        if self.dev is not None:
+            self.dev.close()
+        self._kbd.release()
         self.pad.close()
         log.info("stopped")
 

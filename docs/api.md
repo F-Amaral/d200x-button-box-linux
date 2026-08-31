@@ -35,12 +35,15 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 | PUT | `/api/profiles/<name>` | profile dict | saved |
 | POST | `/api/profiles/<name>` | | create from the default template if missing |
 | DELETE | `/api/profiles/<name>` | | |
-| GET | `/api/games` | | `{lmu: {path}}` — importers + detected install folders |
+| GET | `/api/games` | | `{lmu: {path, can_write}}` — importers + detected install folders |
+| GET | `/api/games/<game>/controls` | | `{controls: [names], device_present, bound: {name: button}}` |
+| POST | `/api/games/<game>/bind` | `{control, button}` or `{control, clear:true}` | write the game's controller config (409 if the game is running) |
 | POST | `/api/profiles/<name>/import` | `{game, path?, overwrite?}` | label the profile from the game's bindings; returns `{applied, skipped, unmatched}` |
 | POST | `/api/activate` | `{"profile": "lmu"｜"auto"}` | manual override |
 | POST | `/api/page` | `{"page": "next"｜"prev"｜N}` | |
 | POST | `/api/icons` | raw image bytes (`Content-Type: image/*`) | saves a 196×196 PNG, returns `{path, url}` |
 | GET | `/api/icons/<name>` | | serves an uploaded icon |
+| GET | `/api/icon-preview?text=&mode=&shape=&border=&fill=&fg=&font=` | | renders a generated icon PNG (used for previews) |
 | GET | `/api/events` | | SSE stream (below) |
 | GET | `/` … | | the web UI |
 

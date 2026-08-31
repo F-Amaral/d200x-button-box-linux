@@ -4,6 +4,9 @@ No external HID library: hidapi's PyPI wheel ships the libusb backend, which on
 this hardware opens interface 0 but never delivers the interrupt-IN reports (and
 throws "read error"). Reading `/dev/hidrawN` ourselves is a dozen lines and just
 works. Writes prepend a 0x00 report-ID byte, as the device expects.
+
+A read or write that fails with a fatal error (device unplugged / re-enumerated)
+raises `DeviceGone` so the daemon can drop the handle and reconnect.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import logging
 import os
 import re
 import select
+import time
 from collections.abc import Iterator
 
 from . import protocol
@@ -32,6 +36,13 @@ _NOT_FOUND = (
     "as on but nothing appears under /sys/class/hidraw, try another USB port "
     "(ideally a USB 2.0 one straight off the motherboard)."
 )
+
+# errnos that mean "transient, nothing to read" vs. "the handle is dead"
+_TRANSIENT = {errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR}
+
+
+class DeviceGone(Exception):
+    """The hidraw handle is no longer usable (unplug / re-enumeration)."""
 
 
 def _iface_of(hidraw_sysfs: str) -> int | None:
@@ -78,50 +89,51 @@ class Device:
         self.path = path
         log.info("opened %s (interface %s)", path, protocol.PROTOCOL_INTERFACE)
 
+    def _write(self, payload: bytes) -> None:
+        try:
+            os.write(self._fd, payload)
+        except OSError as e:
+            if e.errno in _TRANSIENT:
+                return
+            raise DeviceGone(f"write: {e}") from e
+
     def read_raw(self, timeout: float = 0.0) -> bytes | None:
-        r, _, _ = select.select([self._fd], [], [], timeout)
+        try:
+            r, _, _ = select.select([self._fd], [], [], timeout)
+        except OSError as e:
+            raise DeviceGone(f"select: {e}") from e
         if not r:
             return None
         try:
             data = os.read(self._fd, protocol.PACKET_SIZE + 1)
         except OSError as e:
-            if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
-                log.warning("hidraw read: %s", e)
-            return None
+            if e.errno in _TRANSIENT:
+                return None
+            raise DeviceGone(f"read: {e}") from e
         return bytes(data) or None
 
     def set_brightness(self, percent: int) -> None:
-        try:
-            os.write(self._fd, b"\x00" + protocol.build_brightness(percent))
-        except OSError as e:
-            log.warning("brightness write failed: %s", e)
+        self._write(b"\x00" + protocol.build_brightness(percent))
 
     def heartbeat(self) -> None:
         """Keep the deck in host mode. Send every ~2s."""
-        import time as _t
+        self._write(b"\x00" + protocol.build_small_window(1, time.strftime("%H:%M:%S")))
 
-        try:
-            os.write(self._fd, b"\x00" + protocol.build_small_window(1, _t.strftime("%H:%M:%S")))
-        except OSError as e:
-            log.warning("heartbeat write failed: %s", e)
-
-    def send_init(
-        self,
-        labels: dict[int, str] | None = None,
-        icons: dict[int, str] | None = None,
-        quiet: bool = False,
-    ) -> None:
-        """Upload a button layout. Without this the device never reports input,
-        and it drifts back to standalone mode unless this is repeated."""
+    def send_init(self, page=None, quiet: bool = False) -> None:
+        """Upload a button layout for `page` (a config.Page). Without this the
+        device never reports input, and it drifts back to standalone mode unless
+        repeated."""
         from .layout import build_set_buttons
 
-        payload = build_set_buttons(labels, icons)
-        try:
-            for pkt in protocol.frame_packets(protocol.CMD_SET_BUTTONS, payload):
-                os.write(self._fd, b"\x00" + pkt)
-        except OSError as e:
-            log.warning("SET_BUTTONS write failed: %s", e)
-            return
+        if page is None:
+            payload = build_set_buttons()
+        else:
+            payload = build_set_buttons(
+                page.labels(), page.icons(), page.icon_texts(),
+                page.icon_styles(), page.style,
+            )
+        for pkt in protocol.frame_packets(protocol.CMD_SET_BUTTONS, payload):
+            self._write(b"\x00" + pkt)
         if not quiet:
             log.info("sent SET_BUTTONS (%d-byte payload); input should now stream", len(payload))
 

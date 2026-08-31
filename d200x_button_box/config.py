@@ -130,17 +130,33 @@ class Page:
     name: str = ""
     keys: dict[int, dict] = field(default_factory=dict)   # index -> binding
     knobs: dict[int, dict] = field(default_factory=dict)  # index -> {left/right/press: binding}
+    style: dict = field(default_factory=dict)             # default generated-icon style for this page
+
+    def _pick(self, field_name: str) -> dict:
+        return {i: b[field_name] for i, b in self.keys.items()
+                if isinstance(b, dict) and b.get(field_name)}
 
     def labels(self) -> dict[int, str]:
-        return {i: b["label"] for i, b in self.keys.items() if isinstance(b, dict) and b.get("label")}
+        return self._pick("label")
 
     def icons(self) -> dict[int, str]:
-        return {i: b["icon"] for i, b in self.keys.items() if isinstance(b, dict) and b.get("icon")}
+        return self._pick("icon")
+
+    def icon_texts(self) -> dict[int, str]:
+        return self._pick("icon_text")
+
+    def icon_styles(self) -> dict[int, dict]:
+        return self._pick("icon_style")
+
+    def icon_paths_in_use(self) -> set[str]:
+        return set(self.icons().values())
 
     def to_dict(self) -> dict:
         d: dict = {}
         if self.name:
             d["name"] = self.name
+        if self.style:
+            d["style"] = self.style
         d["keys"] = {i: self.keys[i] for i in sorted(self.keys)}
         d["knobs"] = {i: self.knobs[i] for i in sorted(self.knobs)}
         return d
@@ -175,7 +191,7 @@ def list_profiles() -> list[str]:
 
 
 def _page_from_dict(raw: dict) -> Page:
-    page = Page(name=raw.get("name", ""))
+    page = Page(name=raw.get("name", ""), style=dict(raw.get("style") or {}))
     for k, v in (raw.get("keys") or {}).items():
         page.keys[int(k)] = v or {}
     for k, v in (raw.get("knobs") or {}).items():
@@ -213,6 +229,23 @@ def delete_profile(name: str) -> bool:
         path.unlink()
         return True
     return False
+
+
+def gc_icons() -> int:
+    """Delete uploaded icons in CONFIG_DIR/icons/ that no profile references."""
+    icons_dir = CONFIG_DIR / "icons"
+    if not icons_dir.is_dir():
+        return 0
+    used: set[str] = set()
+    for name in list_profiles():
+        for page in load_profile(name).pages:
+            used |= {Path(p).name for p in page.icon_paths_in_use()}
+    removed = 0
+    for f in icons_dir.glob("*.png"):
+        if f.name not in used:
+            f.unlink()
+            removed += 1
+    return removed
 
 
 def save_profile(prof: Profile) -> None:

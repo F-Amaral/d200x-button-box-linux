@@ -17,7 +17,7 @@ Built for *Le Mans Ultimate* first, *Assetto Corsa EVO* second, in VR.
 ## Quickstart
 
 ```bash
-git clone <this repo> ~/Projetos/d200x-button-box && cd ~/Projetos/d200x-button-box
+git clone <this repo> d200x-button-box && cd d200x-button-box
 python -m venv .venv && . .venv/bin/activate && pip install -e .
 
 sudo cp udev/70-d200x.rules /etc/udev/rules.d/
