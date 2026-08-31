@@ -35,6 +35,7 @@ class Daemon:
         self._kbd = KeyboardSink(enabled=s.grab_keyboard)
         self._pending: list[tuple[float, int]] = []  # (release_at_monotonic, button)
         self._held: set[int] = set()                  # gamepad buttons held down right now
+        self._pressed: dict[int, tuple[float, dict]] = {}  # keys with a hold: action, awaiting tap/hold
         self._page = 0
         self._queued_profile: str | None = None      # profile: binding, applied next tick
         self._queued_page: str | None = None         # page: binding, applied next tick
@@ -147,17 +148,28 @@ class Daemon:
                 return
         log.warning("neither ydotool nor xdotool found; cannot send key %r", keys)
 
+    # --- navigation (aux buttons / home) --------------------------------
+    def _nav_binding(self, i: int) -> dict | None:
+        """Synthesise a binding for a key that has no explicit one, from
+        settings.nav / settings.home (page prev/next, press-and-hold home)."""
+        nav, home = self.settings.nav, self.settings.home
+        is_prev = nav.prev_key == i
+        is_next = nav.next_key == i
+        is_home = home.key is not None and home.key == i
+        if not (is_prev or is_next or is_home):
+            return None
+        if is_home and (is_prev or is_next) and self.profile.n_pages > 1:
+            page = {"page": "prev" if is_prev else "next"}
+            return {**page, "hold": {"profile": "home"}, "role": "nav"}
+        if is_home:
+            return {"profile": "home", "role": "nav"}
+        return {"page": "prev" if is_prev else "next", "role": "nav"}
+
     # --- event routing -----------------------------------------------------
     def _on_event(self, ev: protocol.InputEvent) -> None:
         if self._subs:
             self._publish({"type": "input", "name": ev.name, "index": ev.index,
                            "kind": ev.kind, "action": ev.action})
-
-        home = self.settings.home
-        if home.key is not None and ev.kind == "key" and ev.index == home.key:
-            if ev.action == "press":
-                self._go_home()
-            return
 
         page = self.page
         if ev.kind == "knob":
@@ -171,11 +183,28 @@ class Daemon:
                 self._fire(binding, None)
             return
 
-        binding = page.keys.get(ev.index)
+        binding = page.keys.get(ev.index) or self._nav_binding(ev.index)
         if binding is None:
             log.debug("unmapped key %s", ev.index)
             return
+
+        if isinstance(binding.get("hold"), dict):
+            if ev.action == "press":
+                self._pressed[ev.index] = (time.monotonic(), binding)
+            elif ev.index in self._pressed:      # released before the hold fired -> tap
+                _, b = self._pressed.pop(ev.index)
+                self._fire({k: v for k, v in b.items() if k != "hold"}, None)
+            return
         self._fire(binding, ev.action == "press")
+
+    def _tick_hold(self, now: float) -> None:
+        if not self._pressed:
+            return
+        thr = self.settings.hold_ms / 1000.0
+        for i, (t, b) in list(self._pressed.items()):
+            if now - t >= thr:
+                del self._pressed[i]
+                self._fire(b["hold"], None)
 
     def _drain_pending(self) -> None:
         if not self._pending:
@@ -207,7 +236,7 @@ class Daemon:
             return False
         self._kbd.grab()
         try:
-            self.dev.send_init(self.page)
+            self.dev.send_init(self.page, self.settings.icon)
             if self.settings.brightness is not None:
                 self.dev.set_brightness(self.settings.brightness)
         except DeviceGone:
@@ -231,7 +260,7 @@ class Daemon:
         if self.dev is None:
             return
         try:
-            self.dev.send_init(self.page, quiet=True)
+            self.dev.send_init(self.page, self.settings.icon, quiet=True)
         except DeviceGone:
             self._disconnect_device("write during layout push")
 
@@ -363,6 +392,7 @@ class Daemon:
                         self.set_page(self._queued_page)
                         self._queued_page = None
 
+                    self._tick_hold(now)
                     self._tick_home(now, got_input)
 
                     if self.settings.heartbeat_seconds and now - last_beat > self.settings.heartbeat_seconds:

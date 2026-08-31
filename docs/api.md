@@ -43,7 +43,9 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 | POST | `/api/page` | `{"page": "next"｜"prev"｜N}` | |
 | POST | `/api/icons` | raw image bytes (`Content-Type: image/*`) | saves a 196×196 PNG, returns `{path, url}` |
 | GET | `/api/icons/<name>` | | serves an uploaded icon |
-| GET | `/api/icon-preview?text=&mode=&shape=&border=&fill=&fg=&font=` | | renders a generated icon PNG (used for previews) |
+| GET | `/api/icon-preview?text=&glyph=&label=&mode=&shape=&border=&fill=&fg=&font=` | | renders a generated icon PNG (`label` → auto glyph or initials) |
+| GET | `/api/glyphs` | | `{names: [...], aliases: {...}}` — the bundled glyph set |
+| GET | `/api/font` | | the bundled Material Icons OTF (for `@font-face`) |
 | GET | `/api/events` | | SSE stream (below) |
 | GET | `/` … | | the web UI |
 

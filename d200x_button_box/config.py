@@ -48,6 +48,19 @@ class HomeConfig:
 
 
 @dataclass
+class NavConfig:
+    """The two page-navigation keys (default: the aux buttons)."""
+    prev_key: int | None = 15        # aux L
+    next_key: int | None = 16        # aux R
+
+
+def default_icon_cfg() -> dict:
+    from . import layout
+
+    return {"game": dict(layout.DEFAULT_GAME_STYLE), "nav": dict(layout.DEFAULT_NAV_STYLE)}
+
+
+@dataclass
 class Settings:
     brightness: int | None = 80
     heartbeat_seconds: float = 2
@@ -55,10 +68,13 @@ class Settings:
     gamepad_name: str = "D200x Button Box"
     gamepad_buttons: int = 32
     pulse_ms: int = 60
+    hold_ms: int = 500               # tap vs press-and-hold threshold
     active_profile: str = "default"
     auto_detect: dict[str, list[str]] = field(default_factory=dict)
     games: dict[str, str] = field(default_factory=dict)  # game -> install path (for label import)
+    icon: dict = field(default_factory=default_icon_cfg)  # {game: style, nav: style}
     home: HomeConfig = field(default_factory=HomeConfig)
+    nav: NavConfig = field(default_factory=NavConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
 
     @classmethod
@@ -74,6 +90,13 @@ class Settings:
         pad = raw.get("gamepad", {}) or {}
         api = raw.get("api", {}) or {}
         home = raw.get("home", {}) or {}
+        nav = raw.get("nav", {}) or {}
+        icon = raw.get("icon") or {}
+        base_icon = default_icon_cfg()
+        merged_icon = {
+            "game": {**base_icon["game"], **(icon.get("game") or {})},
+            "nav": {**base_icon["nav"], **(icon.get("nav") or {})},
+        }
         return cls(
             brightness=dev.get("brightness", cls.brightness),
             heartbeat_seconds=float(dev.get("heartbeat_seconds", cls.heartbeat_seconds)),
@@ -81,9 +104,12 @@ class Settings:
             gamepad_name=pad.get("name", cls.gamepad_name),
             gamepad_buttons=int(pad.get("buttons", cls.gamepad_buttons)),
             pulse_ms=int(raw.get("pulse_ms", cls.pulse_ms)),
+            hold_ms=int(raw.get("hold_ms", cls.hold_ms)),
             active_profile=raw.get("active_profile", cls.active_profile),
             auto_detect={k: list(v) for k, v in (raw.get("auto_detect") or {}).items()},
             games={k: str(v) for k, v in (raw.get("games") or {}).items()},
+            icon=merged_icon,
+            nav=NavConfig(prev_key=nav.get("prev_key", 15), next_key=nav.get("next_key", 16)),
             home=HomeConfig(
                 key=home.get("key"),
                 profile=home.get("profile", "launcher"),
@@ -105,9 +131,12 @@ class Settings:
             },
             "gamepad": {"name": self.gamepad_name, "buttons": self.gamepad_buttons},
             "pulse_ms": self.pulse_ms,
+            "hold_ms": self.hold_ms,
             "active_profile": self.active_profile,
             "auto_detect": self.auto_detect,
             "games": self.games,
+            "icon": self.icon,
+            "nav": {"prev_key": self.nav.prev_key, "next_key": self.nav.next_key},
             "home": {
                 "key": self.home.key,
                 "profile": self.home.profile,
@@ -263,23 +292,20 @@ def default_profile(name: str = "default") -> Profile:
 
         LCD key i (0..12)  -> button i + 1        (1..13)
         wide status key    -> button 14
-        aux L / aux R      -> home / page  (buttons 15, 16 reserved, unused)
+        aux L / aux R      -> page prev / next  (from settings.nav; buttons 15,16 unused)
         encoder 17 L/R/click -> buttons 17, 18, 19
         encoder 18           -> 20, 21, 22
         encoder 19           -> 23, 24, 25
 
-    The leftmost aux button is the global home key (settings.home); the right
-    one cycles pages.
+    The aux buttons are left unbound so settings.nav / settings.home drive them
+    (prev/next page; press-and-hold the left one for home).
     """
     page = Page()
     for i in KEY_INDICES:
-        if i == HOME_KEY_INDEX:
-            page.keys[i] = {"profile": "home"}
-        elif i == protocol.PAGE_KEY_INDICES[1]:
-            page.keys[i] = {"page": "next"}
-        else:
-            label = "STATUS" if i == protocol.STATUS_KEY_INDEX else f"BTN {i + 1}"
-            page.keys[i] = {"gamepad": i + 1, "label": label}
+        if i in protocol.PAGE_KEY_INDICES:
+            continue  # aux buttons: handled by the nav system
+        label = "STATUS" if i == protocol.STATUS_KEY_INDEX else f"BTN {i + 1}"
+        page.keys[i] = {"gamepad": i + 1, "label": label}
     for pos, i in enumerate(KNOB_INDICES):
         base = 17 + pos * 3
         page.knobs[i] = {

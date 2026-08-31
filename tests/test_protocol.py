@@ -63,17 +63,29 @@ def test_brightness_and_small_window_shapes():
 
 
 def test_set_buttons_generates_icons_from_labels():
-    # every LCD key with a label -> a generated icon; status key stays clock-only
-    payload = build_set_buttons({0: "TURN L", 5: "PIT", protocol.STATUS_KEY_INDEX: "STATUS"})
+    page = config.Page(keys={
+        0: {"gamepad": 1, "label": "TURN L"},
+        5: {"gamepad": 6, "label": "Pit"},
+        protocol.STATUS_KEY_INDEX: {"label": "STATUS"},
+    })
+    payload = build_set_buttons(page)
     with zipfile.ZipFile(io.BytesIO(payload)) as z:
         manifest = json.loads(z.read("manifest.json"))
         names = z.namelist()
-    assert "Icon" in manifest["0_0"]["ViewParam"][0]
-    assert manifest["0_0"]["ViewParam"][0]["Icon"] in names
-    assert "Text" not in manifest["0_0"]["ViewParam"][0]     # icon carries the text now
-    assert "Icon" not in manifest["3_2"]["ViewParam"][0]      # status = no generated icon
+    assert manifest["0_0"]["ViewParam"][0]["Icon"] in names   # generated icon
+    assert "Text" not in manifest["0_0"]["ViewParam"][0]
+    assert "Icon" not in manifest["3_2"]["ViewParam"][0]       # status = clock only
     for i in range(protocol.PACKET_SIZE - 8, len(payload), protocol.PACKET_SIZE):
         assert payload[i] not in (0x00, 0x7C)
+
+
+def test_set_buttons_auto_glyph_for_nav():
+    page = config.Page(keys={0: {"page": "next"}, 1: {"profile": "home"}})
+    payload = build_set_buttons(page)
+    with zipfile.ZipFile(io.BytesIO(payload)) as z:
+        manifest = json.loads(z.read("manifest.json"))
+    assert "Icon" in manifest["0_0"]["ViewParam"][0]  # chevron glyph, no label needed
+    assert "Icon" in manifest["1_0"]["ViewParam"][0]  # home glyph
 
 
 def test_set_buttons_embeds_uploaded_icon(tmp_path):
@@ -81,7 +93,7 @@ def test_set_buttons_embeds_uploaded_icon(tmp_path):
 
     p = tmp_path / "ic.png"
     Image.new("RGB", (64, 64), "red").save(p)
-    payload = build_set_buttons({}, {1: str(p)})
+    payload = build_set_buttons(config.Page(keys={1: {"gamepad": 2, "icon": str(p)}}))
     with zipfile.ZipFile(io.BytesIO(payload)) as z:
         names = z.namelist()
         manifest = json.loads(z.read("manifest.json"))
@@ -91,19 +103,76 @@ def test_set_buttons_embeds_uploaded_icon(tmp_path):
             assert img.size == (196, 196)
 
 
-def test_render_icon_shapes_and_style():
+def test_render_icon_glyph_and_text():
     import io as _io
 
     from PIL import Image
 
-    from d200x_button_box import layout
+    from d200x_button_box import glyphs, layout
 
-    png = layout.render_icon({"shape": "round", "mode": "ring", "border": "#ff0000"}, "Pit Stop")
-    with Image.open(_io.BytesIO(png)) as img:
+    g = layout.render_icon({"shape": "round", "mode": "ring", "border": "#ff0000"}, glyph="chevron_right")
+    with Image.open(_io.BytesIO(g)) as img:
         assert img.size == (196, 196) and img.mode == "RGBA"
+    t = layout.render_icon(None, text="Pit Stop")
+    assert isinstance(t, bytes) and t[:8] == b"\x89PNG\r\n\x1a\n"
     assert layout.icon_initials("Traction Control Down") == "TCD"
-    assert layout.icon_initials("Headlights") == "HEA"
-    assert layout.merge_style({"fg": "#000"})["border"] == layout.DEFAULT_STYLE["border"]
+    assert glyphs.codepoint("next") == glyphs.NAME_TO_CP["chevron_right"]
+    assert glyphs.action_glyph({"page": "prev"}) == "prev"
+    assert glyphs.label_glyph("Headlights") == "headlights_auto"   # on/off/auto toggle
+    assert glyphs.label_glyph("Low Beam") == "hl_low"
+    assert glyphs.label_glyph("High Beam Flash") == "hl_high"
+    assert glyphs.label_glyph("Wiper Speed") == "wiper"
+
+
+def test_iso_telltale_render_and_tint():
+    import io as _io
+
+    from PIL import Image
+
+    from d200x_button_box import glyphs, layout, telltales
+
+    assert "hl_low" in telltales.names() and "turn" in telltales.names()
+    assert "hl_low" in glyphs.telltale_names()
+
+    png = layout.render_icon({"fg": "#ff0000"}, glyph="turn")
+    with Image.open(_io.BytesIO(png)) as im:
+        im = im.convert("RGBA")
+        assert im.size == (196, 196)
+        opaque = [im.getpixel((x, y)) for x in range(0, 196, 7) for y in range(0, 196, 7)
+                  if im.getpixel((x, y))[3] > 200]
+        assert opaque and all(p[0] > 180 and p[1] < 80 and p[2] < 80 for p in opaque)  # tinted red
+
+
+def test_composed_icons_are_built_and_pickable():
+    import io as _io
+
+    from PIL import Image
+
+    from d200x_button_box import compose, glyphs, layout
+
+    # every spec has a committed PNG (run tools/build-composed-icons.py if this fails)
+    for name in compose.names():
+        assert name in glyphs.telltale_names(), f"{name}.png missing -- rebuild composed icons"
+        png = layout.render_icon({"fg": "#4a9eff"}, glyph=name)
+        with Image.open(_io.BytesIO(png)) as im:
+            assert im.size == (196, 196) and im.mode == "RGBA" and im.getbbox() is not None
+
+
+def test_compose_render_is_deterministic_and_tinted():
+    import io as _io
+
+    from PIL import Image
+
+    from d200x_button_box import compose
+
+    a = compose.render("seat_up", "#ff0000", 128)
+    b = compose.render("seat_up", "#ff0000", 128)
+    assert a == b
+    with Image.open(_io.BytesIO(a)) as im:
+        im = im.convert("RGBA")
+        px = [im.getpixel((x, y)) for x in range(0, 128, 5) for y in range(0, 128, 5)
+              if im.getpixel((x, y))[3] > 200]
+        assert px and all(p[0] > 180 and p[1] < 80 and p[2] < 80 for p in px)
 
 
 def test_settings_roundtrip(tmp_path):
@@ -119,10 +188,9 @@ def test_settings_roundtrip(tmp_path):
 
 def test_default_profile_stable_numbering():
     page = config.default_profile("x").page(0)
-    assert set(page.keys) == set(config.KEY_INDICES)
+    # aux buttons are left unbound (nav system drives them)
+    assert set(page.keys) == set(range(13)) | {config.protocol.STATUS_KEY_INDEX}
     assert set(page.knobs) == set(config.KNOB_INDICES)
-    assert page.keys[config.HOME_KEY_INDEX] == {"profile": "home"}   # leftmost aux
-    assert page.keys[16] == {"page": "next"}                          # rightmost aux
     # stable map: LCD key i -> button i+1, status -> 14, encoders -> 17..25
     assert page.keys[0]["gamepad"] == 1 and page.keys[12]["gamepad"] == 13
     assert page.keys[13]["gamepad"] == 14

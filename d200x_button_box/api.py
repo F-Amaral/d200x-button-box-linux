@@ -260,11 +260,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok})
 
         if seg == ["icon-preview"] and method == "GET":
-            from . import layout
+            from . import glyphs, layout
 
             q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
             style = {k: q[k] for k in layout.STYLE_KEYS if k in q}
-            return self._raw(layout.render_icon(style, q.get("text", "")), "image/png")
+            glyph = q.get("glyph") or (glyphs.label_glyph(q["label"]) if q.get("label") else None)
+            return self._raw(layout.render_icon(style, q.get("text") or q.get("label", ""), glyph), "image/png")
+
+        if seg == ["glyphs"] and method == "GET":
+            from . import glyphs
+
+            return self._json({"names": glyphs.names(), "aliases": glyphs.ALIASES})
+
+        if seg == ["font"] and method == "GET":
+            from . import glyphs
+
+            return self._raw(glyphs.FONT_PATH.read_bytes(), "font/otf")
 
         if seg == ["icons"] and method == "POST":
             return self._json(_save_icon(self._read_raw_body()))

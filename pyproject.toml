@@ -24,4 +24,4 @@ d200x-buttonboxd = "d200x_button_box.cli:daemon_main"
 packages = ["d200x_button_box"]
 
 [tool.setuptools.package-data]
-d200x_button_box = ["webui/**/*"]
+d200x_button_box = ["webui/**/*", "assets/**/*"]

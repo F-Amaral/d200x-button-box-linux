@@ -139,7 +139,70 @@ keys:
 - `mode`: `solid` (filled) or `ring` (outline only, dark centre)
 - `shape`: `circle` or `round`
 - `border` / `fill` / `fg`: hex colours
-- `font`: `sans` / `condensed` / `mono` / `liberation`
+- `font`: `sans` / `condensed` / `mono` / `liberation` (text mode only)
+
+A key can also carry `glyph: <name>` — a real **ISO 7000 automotive tell-tale**
+(`hl_low`, `hl_high`, `turn`, `hazards`, `wiper`, `washer`, `horn`, `fan`,
+`battery`, `oil`, `tc`, `abs`, `esp`, …), a **composed** icon (`engine_start`,
+`seat_fore`/`seat_aft`/`seat_up`/`seat_down`/`seat_recline`), or a **Material
+Icons** name; `GET /api/glyphs` lists them all. Tell-tales and composed icons
+are drawn frameless; everything else sits on the circle / rounded-square frame.
+
+Composed icons (`engine_start`, the `seat_*` family) are generated: a spec in
+`d200x_button_box/compose.py` describes a base ISO symbol + drawn arrows / arcs
+/ lines (coords as fractions of the icon square), and
+`tools/build-composed-icons.py` renders each to a committed PNG in
+`assets/telltales/`. To add or change one, edit `COMPOSED` and re-run the tool.
+
+```python
+# a spec
+"seat_up": {
+    "base": "seat", "base_scale": 0.54, "base_at": [0.40, 0.44],
+    "layers": [
+        {"type": "line",  "from": [0.06, 0.9], "to": [0.8, 0.9], "w": 0.045},
+        {"type": "arrow", "at": [0.86, 0.86], "dir": "up", "len": 0.34, "head": 0.12, "w": 0.055},
+    ],
+}
+```
+
+**Nav keys pick a glyph automatically:** `{page: next}` → chevron,
+`{profile: home}` → house, `{command: …}` → terminal. **Game keys** with a label
+but no glyph get one from keywords — car-control words map to the tell-tales —
+and fall back to the label's initials.
+
+## Two style baselines
+
+`settings.icon` has `game` and `nav` sub-styles:
+
+```yaml
+icon:
+  game: {mode: solid, shape: circle, border: "#4a9eff", fill: "#2a3140", fg: "#ffffff"}
+  nav:  {mode: ring,  shape: round,  border: "#7d8794", fill: "#0d0f13", fg: "#aeb6c2"}
+```
+
+Action keys use `game` (then `page.style`, then the key's `icon_style`);
+navigation keys (`page:` / `profile:` bindings, or `role: nav`) use `nav`. The
+visual language: **circle = a sim control, rounded square = a box control.**
+
+## Page navigation
+
+```yaml
+# settings.yaml
+nav: {prev_key: 15, next_key: 16}   # default: the two aux buttons
+hold_ms: 500
+```
+
+The aux buttons page prev / next with **no binding needed**. On a multi-page
+profile the left one is `tap → prev page`, `hold → home` (`settings.home`); on a
+single-page profile it's just `home`. Put an explicit binding on those keys in a
+profile to override. `+ page` in the web UI moves any explicit aux bindings onto
+the new page.
+
+Any binding can take `hold:` for a second press-and-hold action:
+
+```yaml
+0: {gamepad: 1, hold: {command: "some-reset-script"}}
+```
 
 In the web UI: the **⚙** next to the page tabs edits the page style + name; the
 **style** button in a key's editor sets a per-key override; **upload an image**

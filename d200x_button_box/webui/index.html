@@ -246,25 +246,54 @@ function labelFor(id){ return id===STATUS?"status":id===AUX_L?"aux ◀":id===AUX
 function iconURL(path){ const n=(path||"").split("/").pop(); return /^[0-9a-f]{16}\.png$/.test(n)?"api/icons/"+n:""; }
 function shortVal(b){ const a=actOf(b); if(a==="none")return""; if(a==="gamepad")return"btn "+b.gamepad+(b.momentary?" ·pulse":""); return a+": "+(b[a]??""); }
 const STYLE_KEYS=["mode","shape","fill","border","fg","font"];
-function mergedStyle(b){ return Object.assign({}, curPage().style||{}, b.icon_style||{}); }
+const NAV_BASE={mode:"ring",shape:"round",fill:"#0d0f13",border:"#7d8794",fg:"#aeb6c2",font:"sans"};
+const GAME_BASE={mode:"solid",shape:"circle",fill:"#2a3140",border:"#4a9eff",fg:"#ffffff",font:"sans"};
+function isNav(b){ return b.role==="nav" || "page" in b || "profile" in b; }
+function autoGlyph(b){
+  if(b.glyph) return b.glyph;
+  if("page" in b){ const v=String(b.page).toLowerCase(); return v==="prev"||v==="previous"?"chevron_left":v==="next"?"chevron_right":"layers"; }
+  if("profile" in b){ const v=String(b.profile).toLowerCase(); return {home:"home",auto:"refresh",next:"swap",prev:"swap"}[v]||"swap"; }
+  if("command" in b) return "terminal";
+  return "";
+}
+function mergedStyle(b){
+  const base=isNav(b)?NAV_BASE:Object.assign({},GAME_BASE,S.settings?.icon?.game,curPage().style);
+  return Object.assign({}, base, b.icon_style||{});
+}
 function previewURL(b){
   if(iconURL(b.icon)) return iconURL(b.icon);
-  const text=b.icon_text||b.label; if(!text || b.icon) return "";
+  if(b.icon) return "";
+  const glyph=autoGlyph(b), text=b.icon_text||b.label;
+  if(!glyph && !text) return "";
   const s=mergedStyle(b);
-  const q=new URLSearchParams({text}); STYLE_KEYS.forEach(k=>{ if(s[k]) q.set(k,s[k]); });
+  const q=new URLSearchParams();
+  if(glyph) q.set("glyph",glyph);
+  else if(b.icon_text) q.set("text",b.icon_text);
+  else if(b.label) q.set("label",b.label);          // server picks a glyph or falls back to initials
+  STYLE_KEYS.forEach(k=>{ if(s[k]) q.set(k,s[k]); });
   return "api/icon-preview?"+q;
 }
 
+function navBindingFor(id){
+  const n=S.settings?.nav||{}, h=S.settings?.home||{};
+  const isPrev=n.prev_key===id, isNext=n.next_key===id, isHome=h.key!=null&&h.key===id;
+  if(!(isPrev||isNext||isHome)) return null;
+  if(isHome && (isPrev||isNext) && pages().length>1) return {page:isPrev?"prev":"next",hold:{profile:"home"},role:"nav"};
+  if(isHome) return {profile:"home",role:"nav"};
+  return {page:isPrev?"prev":"next",role:"nav"};
+}
 function cellFor(id,cls){
-  const b=curPage().keys[id]||{};
+  const explicit=curPage().keys[id];
+  const b=explicit||navBindingFor(id)||{};
   const c=el("div",{class:"cell "+(cls||"")}); c.dataset.id=id;
-  if(!Object.keys(b).length && id!==STATUS) c.classList.add("empty");
+  if(!explicit && !b.role && id!==STATUS) c.classList.add("empty");
   if(S.sel&&S.sel.kind==="key"&&S.sel.index===id) c.classList.add("sel");
-  if(id===S.homeKey) c.append(el("span",{class:"badge",textContent:"HOME"}));
+  if(id===(S.settings?.home?.key)) c.append(el("span",{class:"badge",textContent:"HOME"}));
   const u=id===STATUS?iconURL(b.icon):previewURL(b);
   if(u){ c.append(el("img",{src:u})); }
   else { c.append(el("div",{class:"lbl",textContent:b.label||labelFor(id),title:b.label||""})); }
-  const v=shortVal(b); if(v) c.append(el("div",{class:"v",textContent:v,title:v}));
+  const v=explicit?shortVal(b):(b.role?(b.hold?"tap: page / hold: home":b.page?("page "+b.page):"home"):"");
+  if(v) c.append(el("div",{class:"v",textContent:v,title:v}));
   c.onclick=()=>selectControl("key",id);
   return c;
 }
@@ -275,7 +304,7 @@ function renderDeck(){
   for(const k of KNOBS){
     const c=el("div",{class:"cell knob"}); c.dataset.id=k;
     if(S.sel&&S.sel.kind==="knob"&&S.sel.index===k) c.classList.add("sel");
-    if(k===S.homeKey) c.append(el("span",{class:"badge",textContent:"HOME"}));
+    if(k===(S.settings?.home?.key)) c.append(el("span",{class:"badge",textContent:"HOME"}));
     c.append(el("div",{class:"lbl",textContent:"⟳ enc "+k}));
     const kb=curPage().knobs[k]||{};
     const parts=["left","right","press"].filter(s=>kb[s]&&actOf(kb[s])!=="none").map(s=>kb[s].label||(s+" "+shortVal(kb[s])));
@@ -531,7 +560,23 @@ $("#importBtn").onclick=openImport;
 $("#listenBtn").onclick=()=>{ S.listening=!S.listening; $("#listenBtn").classList.toggle("on",S.listening); $("#listenBtn").textContent=S.listening?"Listening…":"Listen"; };
 $("#autosave").onchange=e=>{ S.autosave=e.target.checked; localStorage.setItem("d200x.autosave",S.autosave?"1":"0"); if(S.autosave&&S.dirty)save(); renderStatus(); };
 $("#profileSel").onchange=async e=>{ await api("activate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({profile:e.target.value})}); await loadProfile(e.target.value); };
-$("#addPage").onclick=()=>{ pages().push({name:"",keys:{},knobs:{}}); S.page=pages().length-1; render(); touched(); };
+$("#addPage").onclick=()=>{
+  const newPage={name:"",style:{},keys:{},knobs:{}};
+  // going 1 -> 2 pages: the aux buttons become page nav (nav system, automatic).
+  // Move anything explicitly bound on them onto the new page's first free keys.
+  if(pages().length===1){
+    let slot=0;
+    for(const aux of [AUX_L,AUX_R]){
+      const b=pages()[0].keys[aux];
+      if(b && !b.role){
+        while(newPage.keys[slot]) slot++;
+        newPage.keys[slot++]=b;
+        delete pages()[0].keys[aux];
+      }
+    }
+  }
+  pages().push(newPage); S.page=pages().length-1; render(); touched();
+};
 
 window.onbeforeunload=e=>{ if(S.dirty&&!S.autosave){ e.preventDefault(); e.returnValue=""; } };
 boot().catch(e=>{ console.error(e); $("#editor").innerHTML='<p class="placeholder">Cannot reach the daemon API. Is <code>d200x-buttonboxd</code> running?</p>'; });

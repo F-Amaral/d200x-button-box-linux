@@ -53,6 +53,9 @@ it. If that's not acceptable, don't use it. See [LICENSE](LICENSE).
 
 ## Credits
 
+Deck icons: **ISO 7000** automotive tell-tale symbols (public domain, via
+Wikimedia Commons) and **Material Icons** (Apache-2.0), both bundled.
+
 The wire protocol was reverse-engineered by the
 [strmdck](https://github.com/redphx/strmdck),
 [ulanzi-d200-linux](https://github.com/racerxdl/ulanzi-d200-linux),

@@ -109,7 +109,50 @@ Phase 3 polish (done):
   (start/stop daemon, quick profile switch, open UI). `.desktop` file + autostart.
 - Lazy path: it's a thin shell over the same API, no logic duplicated.
 
+### Icon system v3 — DONE (see plans/icon-system.md)
+- bundled **Material Icons Round** font (`assets/`, ~400 KB, Apache-2.0);
+  `glyphs.py` = 53 curated names + aliases
+- `layout.render_icon(style, text, glyph)` — a Material glyph or initials
+- `glyph:` binding field + **auto-glyph**: nav keys from the action
+  (`page:` → chevron, `profile: home` → house, `command:` → terminal); game keys
+  from label keywords (headlight / wiper / fuel / radio / …), text initials fallback
+- `settings.icon.game` (solid circle, accent) vs `settings.icon.nav`
+  (ring, rounded-square, neutral) — the "circle = sim, square = box control" language
+- `settings.nav.prev_key` / `next_key` (default aux L / R) drive page navigation
+  with **no explicit binding needed**; explicit bindings still win
+- **press-and-hold**: `hold:` on any binding (tap vs hold, `settings.hold_ms`);
+  aux L = tap → prev page, hold → home when the profile is multi-page
+- `+ page` relocates anything explicitly bound on the aux keys to the new page
+- API: `/api/icon-preview` takes `glyph` / `label`; `/api/glyphs`; `/api/font`
+
+- **automotive tell-tales** — ~108 real dashboard symbols (mostly ISO 7000, all
+  public domain — RealDash-forum PD pack) bundled as tintable white PNGs in
+  `assets/telltales/` (`telltales.py`), rendered frameless. `ignition` (ISO
+  3033A) and `headlights_auto` (ISO 2957) fetched from Commons
+  (`tools/fetch-iso-icons.py`).
+- **parametric icon composition** (`compose.py` + `tools/build-composed-icons.py`)
+  — `engine_start` and the `seat_*` family are specs (base ISO symbol + drawn
+  arrow / arc / line), rendered by the tool to committed PNGs in
+  `assets/telltales/`. Edit a spec, re-run the tool. The general path for
+  combining icons going forward.
+- Together they cover the full sim vocabulary: TC, ABS, ESP, engine map, shift
+  up/down, brake bias, tyre pressure, fog, hazards, cruise, page nav, media.
+  Material Icons for the rest.
+
+Icon system v3 — UI still TODO:
+- glyph picker in the key icon dialog
+- settings dialog editors for `icon.game` / `icon.nav`
+- `@font-face` the bundled font in the web UI (currently uses server previews)
+
+## Next up — frontend rethink
+Redesign `webui/index.html` with the same UI/UX language now on the deck:
+the two registers (sim vs box control), readable-at-a-glance, "less amateur".
+Design first (a plans/ note), then rebuild.
+
 ## Backlog
+- **Widgets / telemetry on keys** — `widget:` field + provider system (clock /
+  system / mpris / shell now; per-sim telemetry adapters later). Partial LCD
+  updates. See plans/icon-system.md.
 - Delete profile / delete page in the UI (API already has delete)
 - AC EVO importer (needs a sample of its control-config file — not installed here)
 - Profile export / import (share a setup as a file)

@@ -5,16 +5,16 @@ SET_BUTTONS upload -- that switches it from standalone-keyboard mode to
 host-controlled mode. So the daemon sends one on startup and on every
 profile/page change.
 
-Every LCD key with a label gets an icon: an uploaded image if `icon:` points to
-one, otherwise a generated one (initials in a circle / rounded square) using the
-page's `style` merged with the key's own `icon_style`. That way the deck never
-shows bare text on black.
+Every LCD key gets an icon so the deck is never bare text on black:
 
-Payload structure, mirrored from Ulanzi Studio USB captures (via the
-companion-surface-d200 project):
+    binding.icon              an uploaded image, wins
+    binding.glyph             an explicit Material Icons glyph name
+    action / label glyph      auto: {page:}/{profile:}/{command:} and label hints
+    binding.icon_text / label initials, drawn in the shape
+    (nothing)
 
-    manifest.json     at archive root -- {"<col>_<row>": {State, ViewParam:[...]}}
-    Images/<id>.png   196x196 icons referenced from the manifest
+Style is layered: a baseline (settings.icon.game for action keys, .nav for
+navigation keys) <- page.style <- binding.icon_style.
 
 Firmware bug: the first byte of every raw 1024-byte chunk after the first must
 not be 0x00 or 0x7c; we retry the archive with a random dummy file until safe.
@@ -30,36 +30,26 @@ import os
 import re
 import zipfile
 
-from . import protocol
+from . import glyphs, protocol, telltales
 
 log = logging.getLogger(__name__)
 
 ICON_SIZE = 196
 
-_FONT = {
-    "Align": "bottom",
-    "Color": 0xFFFFFF,
-    "FontName": "Source Han Sans SC",
-    "ShowTitle": True,
-    "Size": 10,
-    "Weight": 80,
+_FONT = {  # the manifest's own text style -- unused now (icons carry the text)
+    "Align": "bottom", "Color": 0xFFFFFF, "FontName": "Roboto",
+    "ShowTitle": False, "Size": 10, "Weight": 80,
 }
 
-# LCD grid keys the manifest must describe: 0..12 plus the wide status slot.
 _MANIFEST_INDICES = [*range(13), protocol.STATUS_KEY_INDEX]
 
-# --- generated-icon style -------------------------------------------------
-DEFAULT_STYLE = {
-    "mode": "solid",      # "solid" (filled) | "ring" (just an outline, dark centre)
-    "shape": "circle",    # "circle" | "round" (rounded square)
-    "fill": "#1b1f26",
-    "border": "#4a9eff",
-    "fg": "#ffffff",
-    "font": "sans",       # sans | condensed | mono | liberation
-}
-STYLE_KEYS = tuple(DEFAULT_STYLE)
+DEFAULT_GAME_STYLE = {"mode": "solid", "shape": "circle", "fill": "#2a3140",
+                      "border": "#4a9eff", "fg": "#ffffff", "font": "sans"}
+DEFAULT_NAV_STYLE = {"mode": "ring", "shape": "round", "fill": "#0d0f13",
+                     "border": "#7d8794", "fg": "#aeb6c2", "font": "sans"}
+STYLE_KEYS = ("mode", "shape", "fill", "border", "fg", "font")
 
-_FONT_FILES = {
+_TEXT_FONT_FILES = {
     "sans": ["DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "NotoSans-Bold.ttf"],
     "condensed": ["DejaVuSansCondensed-Bold.ttf", "DejaVuSans-Bold.ttf"],
     "mono": ["DejaVuSansMono-Bold.ttf", "LiberationMono-Bold.ttf"],
@@ -71,8 +61,8 @@ def _cell(index: int) -> str:
     return f"{index % 5}_{index // 5}"
 
 
-def merge_style(*layers: dict | None) -> dict:
-    out = dict(DEFAULT_STYLE)
+def merge_style(*layers) -> dict:
+    out = dict(DEFAULT_GAME_STYLE)
     for layer in layers:
         for k in STYLE_KEYS:
             if layer and layer.get(k) not in (None, ""):
@@ -93,9 +83,9 @@ def _pil():
     return Image, ImageDraw, ImageFont
 
 
-def _font(name: str, size: int):
+def _text_font(name: str, size: int):
     _, _, ImageFont = _pil()
-    for cand in _FONT_FILES.get(name, _FONT_FILES["sans"]):
+    for cand in _TEXT_FONT_FILES.get(name, _TEXT_FONT_FILES["sans"]):
         try:
             return ImageFont.truetype(cand, size)
         except OSError:
@@ -103,14 +93,27 @@ def _font(name: str, size: int):
     return ImageFont.load_default()
 
 
-def render_icon(style: dict | None, text: str) -> bytes:
-    """A 196x196 RGBA PNG: initials of `text` on a circle / rounded square."""
+def _glyph_font(size: int):
+    _, _, ImageFont = _pil()
+    return ImageFont.truetype(str(glyphs.FONT_PATH), size)
+
+
+def render_icon(style: dict | None, text: str = "", glyph: str | None = None) -> bytes:
+    """196x196 RGBA PNG.
+
+    - a real ISO tell-tale (no frame -- the symbol IS the icon), OR
+    - a Material glyph / text initials on a circle / rounded-square frame.
+    """
     Image, ImageDraw, _ = _pil()
     s = merge_style(style)
     S = ICON_SIZE
+
+    if glyph and telltales.has(glyph):
+        return _pad_png(telltales.tint(glyph, s["fg"], int(S * 0.86)), S)
+
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    pad, bw, rad = 8, 12, 32
+    pad, bw, rad = 8, 12, 34
     box = (pad, pad, S - pad - 1, S - pad - 1)
     fill = None if s["mode"] == "ring" else s["fill"]
     if s["shape"] == "round":
@@ -118,20 +121,36 @@ def render_icon(style: dict | None, text: str) -> bytes:
     else:
         d.ellipse(box, fill=fill, outline=s["border"], width=bw)
 
-    t = icon_initials(text)
-    if t:
-        n = len(t)
-        font = _font(s["font"], {1: 122, 2: 94, 3: 72}.get(n, 58))
-        tb = d.textbbox((0, 0), t, font=font)
+    if glyph and (cp := glyphs.codepoint(glyph)) is not None:
+        font = _glyph_font(112)
+        ch = chr(cp)
+        tb = d.textbbox((0, 0), ch, font=font)
         d.text(((S - (tb[2] - tb[0])) / 2 - tb[0], (S - (tb[3] - tb[1])) / 2 - tb[1]),
-               t, font=font, fill=s["fg"])
+               ch, font=font, fill=s["fg"])
+    else:
+        t = icon_initials(text)
+        if t:
+            font = _text_font(s["font"], {1: 122, 2: 94, 3: 72}.get(len(t), 58))
+            tb = d.textbbox((0, 0), t, font=font)
+            d.text(((S - (tb[2] - tb[0])) / 2 - tb[0], (S - (tb[3] - tb[1])) / 2 - tb[1]),
+                   t, font=font, fill=s["fg"])
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 
+def _pad_png(png: bytes, size: int) -> bytes:
+    Image = _pil()[0]
+    with Image.open(io.BytesIO(png)) as im:
+        im = im.convert("RGBA")
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.paste(im, ((size - im.size[0]) // 2, (size - im.size[1]) // 2), im)
+        buf = io.BytesIO()
+        canvas.save(buf, format="PNG")
+        return buf.getvalue()
+
+
 def _load_icon_png(path: str) -> bytes | None:
-    """A 196x196 PNG for an uploaded image `path`, or None if unreadable."""
     Image = _pil()[0]
     try:
         with Image.open(path) as img:
@@ -146,20 +165,36 @@ def _load_icon_png(path: str) -> bytes | None:
         return None
 
 
-def resolve_icon(label: str, icon_path: str | None, icon_text: str | None,
-                 icon_style: dict | None, page_style: dict | None) -> bytes | None:
-    """Uploaded image if `icon_path` is set, else a generated one if there's text."""
-    if icon_path:
-        png = _load_icon_png(icon_path)
+def is_nav_binding(binding: dict) -> bool:
+    if not isinstance(binding, dict):
+        return False
+    if binding.get("role") == "nav":
+        return True
+    return "page" in binding or "profile" in binding
+
+
+def resolve_key_icon(binding: dict, page_style: dict | None,
+                     game_base: dict, nav_base: dict) -> bytes | None:
+    binding = binding or {}
+    if binding.get("icon"):
+        png = _load_icon_png(binding["icon"])
         if png:
             return png
-    text = (icon_text or label or "").strip()
-    if not text:
+
+    nav = is_nav_binding(binding)
+    base = nav_base if nav else merge_style(game_base, page_style)
+    style = merge_style(base, binding.get("icon_style"))
+
+    glyph = binding.get("glyph") or glyphs.action_glyph(binding)
+    if not glyph and not nav:
+        glyph = glyphs.label_glyph(binding.get("label", ""))
+    text = binding.get("icon_text") or binding.get("label") or ""
+    if not glyph and not text:
         return None
     try:
-        return render_icon(merge_style(page_style, icon_style), text)
+        return render_icon(style, text=text, glyph=glyph)
     except Exception as e:  # noqa: BLE001 - a font/Pillow hiccup must not break the push
-        log.warning("icon render for %r failed: %s", text, e)
+        log.warning("icon render failed (%s / %s): %s", glyph, text, e)
         return None
 
 
@@ -174,7 +209,7 @@ def build_manifest(icons: dict[int, bytes]) -> tuple[bytes, dict[str, bytes]]:
             view["Icon"] = name
         entry: dict = {"State": 0, "ViewParam": [view]}
         if index == protocol.STATUS_KEY_INDEX:
-            entry["SmallViewMode"] = 2  # gives the wide slot its full width
+            entry["SmallViewMode"] = 2
         manifest[_cell(index)] = entry
     return json.dumps(manifest).encode(), files
 
@@ -197,28 +232,23 @@ def _payload_safe(payload: bytes) -> bool:
     return True
 
 
-def build_set_buttons(
-    labels: dict[int, str] | None = None,
-    icon_paths: dict[int, str] | None = None,
-    icon_texts: dict[int, str] | None = None,
-    icon_styles: dict[int, dict] | None = None,
-    page_style: dict | None = None,
-) -> bytes:
-    labels = labels or {}
-    icon_paths = icon_paths or {}
-    icon_texts = icon_texts or {}
-    icon_styles = icon_styles or {}
+def build_set_buttons(page=None, icon_cfg: dict | None = None) -> bytes:
+    """`page` is a config.Page (or None for a blank layout); `icon_cfg` is
+    settings.icon (`{game: {...}, nav: {...}}`)."""
+    icon_cfg = icon_cfg or {}
+    game_base = merge_style(DEFAULT_GAME_STYLE, icon_cfg.get("game"))
+    nav_base = merge_style(DEFAULT_NAV_STYLE, icon_cfg.get("nav"))
 
     icons: dict[int, bytes] = {}
-    for index in _MANIFEST_INDICES:
-        # the wide status key shows the clock (heartbeat); only an explicit
-        # uploaded image goes there, never a generated one
-        label = "" if index == protocol.STATUS_KEY_INDEX else labels.get(index, "")
-        png = resolve_icon(label, icon_paths.get(index),
-                           icon_texts.get(index) if index != protocol.STATUS_KEY_INDEX else None,
-                           icon_styles.get(index), page_style)
-        if png:
-            icons[index] = png
+    if page is not None:
+        for index in _MANIFEST_INDICES:
+            binding = page.keys.get(index, {})
+            if index == protocol.STATUS_KEY_INDEX:
+                png = _load_icon_png(binding["icon"]) if binding.get("icon") else None
+            else:
+                png = resolve_key_icon(binding, page.style, game_base, nav_base)
+            if png:
+                icons[index] = png
 
     manifest, files = build_manifest(icons)
     payload = _archive(manifest, files, b"")

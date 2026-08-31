@@ -25,7 +25,7 @@ class FakeDev:
     def __init__(self):
         self.inits = []
 
-    def send_init(self, page=None, quiet=False):
+    def send_init(self, page=None, icon_cfg=None, quiet=False):
         self.inits.append(page)
 
     def set_brightness(self, p):
@@ -156,7 +156,8 @@ def test_home_key_switches_and_reverts(tmp_path, monkeypatch):
     d, _ = _daemon(settings=s)
     d.dev = FakeDev()
 
-    d._on_event(InputEvent(13, "key", "press", b""))     # the home key
+    d._on_event(InputEvent(13, "key", "press", b""))     # the home key -> queues "home"
+    d._apply_profile_binding(d._queued_profile); d._queued_profile = None
     assert d.store.active_name == "launcher"
     assert d._home_revert_at is not None
 
@@ -168,12 +169,52 @@ def test_home_key_switches_and_reverts(tmp_path, monkeypatch):
     assert d.store._forced_profile is None
 
 
-def test_home_key_press_is_not_forwarded_as_binding():
+def test_explicit_binding_wins_over_home_key():
     s = config.Settings(pulse_ms=10)
     s.home = config.HomeConfig(key=13, profile="x", revert_seconds=0)
     d, pad = _daemon(keys={13: {"gamepad": 5}}, settings=s)
     d._on_event(InputEvent(13, "key", "press", b""))
-    assert pad.events == []  # intercepted, not sent to the gamepad
+    assert pad.events == [("press", 5)]  # the explicit binding, not home
+
+
+def test_home_synthesised_when_no_explicit_binding(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    for n in ("default", "launcher"):
+        config.save_profile(config.default_profile(n))
+    s = config.Settings(pulse_ms=10)
+    s.home = config.HomeConfig(key=7, profile="launcher", revert_seconds=0)
+    s.nav = config.NavConfig(prev_key=None, next_key=None)
+    d, _ = _daemon(settings=s)
+    d.dev = FakeDev()
+    d._on_event(InputEvent(7, "key", "press", b""))
+    d._apply_profile_binding(d._queued_profile); d._queued_profile = None
+    assert d.store.active_name == "launcher"
+
+
+def test_aux_hold_is_home_when_multipage(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    for n in ("t", "launcher"):
+        config.save_profile(config.default_profile(n))
+    s = config.Settings(pulse_ms=10, hold_ms=50)
+    s.home = config.HomeConfig(key=15, profile="launcher", revert_seconds=0)
+    s.nav = config.NavConfig(prev_key=15, next_key=16)
+    d, _ = _daemon(pages=[config.Page(name="a"), config.Page(name="b")], settings=s)
+    d.dev = FakeDev()
+
+    # a quick tap -> page prev, not home
+    d._on_event(InputEvent(15, "key", "press", b""))
+    d._on_event(InputEvent(15, "key", "release", b""))
+    assert d._queued_page == "prev" and d._queued_profile is None
+    d._queued_page = None
+
+    # held past the threshold -> home
+    d._on_event(InputEvent(15, "key", "press", b""))
+    assert 15 in d._pressed
+    time.sleep(0.06)
+    d._tick_hold(time.monotonic())
+    assert d._queued_profile == "home"
+    d._apply_profile_binding("home")
+    assert d.store.active_name == "launcher"
 
 
 def test_pages_cycle_and_repush(tmp_path, monkeypatch):

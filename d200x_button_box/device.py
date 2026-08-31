@@ -119,19 +119,13 @@ class Device:
         """Keep the deck in host mode. Send every ~2s."""
         self._write(b"\x00" + protocol.build_small_window(1, time.strftime("%H:%M:%S")))
 
-    def send_init(self, page=None, quiet: bool = False) -> None:
+    def send_init(self, page=None, icon_cfg: dict | None = None, quiet: bool = False) -> None:
         """Upload a button layout for `page` (a config.Page). Without this the
         device never reports input, and it drifts back to standalone mode unless
         repeated."""
         from .layout import build_set_buttons
 
-        if page is None:
-            payload = build_set_buttons()
-        else:
-            payload = build_set_buttons(
-                page.labels(), page.icons(), page.icon_texts(),
-                page.icon_styles(), page.style,
-            )
+        payload = build_set_buttons(page, icon_cfg)
         for pkt in protocol.frame_packets(protocol.CMD_SET_BUTTONS, payload):
             self._write(b"\x00" + pkt)
         if not quiet:
