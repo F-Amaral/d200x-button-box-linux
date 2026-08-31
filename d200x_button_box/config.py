@@ -23,6 +23,16 @@ from . import protocol
 CONFIG_DIR = Path(os.environ.get("D200X_CONFIG_DIR") or (Path.home() / ".config" / "d200x-button-box"))
 SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
 PROFILES_DIR = CONFIG_DIR / "profiles"
+# functions, not constants: tests monkeypatch CONFIG_DIR after import, and a
+# frozen path here once wiped the user's real ~/.config icons during a test run.
+def upload_icons_dir() -> Path:
+    """Images the user uploaded for keys."""
+    return CONFIG_DIR / "icons"
+
+
+def user_icons_dir() -> Path:
+    """PNGs the icon editor rendered from icons.yaml specs."""
+    return CONFIG_DIR / "generated"
 
 # every physical control, in a stable order (used by the default profile + GUI)
 KEY_INDICES = [*range(13), protocol.STATUS_KEY_INDEX, *protocol.PAGE_KEY_INDICES]
@@ -262,7 +272,7 @@ def delete_profile(name: str) -> bool:
 
 def gc_icons() -> int:
     """Delete uploaded icons in CONFIG_DIR/icons/ that no profile references."""
-    icons_dir = CONFIG_DIR / "icons"
+    icons_dir = upload_icons_dir()
     if not icons_dir.is_dir():
         return 0
     used: set[str] = set()

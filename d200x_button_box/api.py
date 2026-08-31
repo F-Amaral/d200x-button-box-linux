@@ -81,7 +81,7 @@ def _save_icon(data: bytes) -> dict:
         img.save(buf, format="PNG")
     png = buf.getvalue()
     name = hashlib.sha1(png).hexdigest()[:16] + ".png"
-    dest = config.CONFIG_DIR / "icons" / name
+    dest = config.upload_icons_dir() / name
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(png)
     return {"path": str(dest), "url": f"/api/icons/{name}"}
@@ -268,9 +268,46 @@ class Handler(BaseHTTPRequestHandler):
             return self._raw(layout.render_icon(style, q.get("text") or q.get("label", ""), glyph), "image/png")
 
         if seg == ["glyphs"] and method == "GET":
-            from . import glyphs
+            from . import compose, glyphs, telltales
 
-            return self._json({"names": glyphs.names(), "aliases": glyphs.ALIASES})
+            return self._json({
+                "names": glyphs.names(),
+                "aliases": glyphs.ALIASES,
+                "composed": list(compose.all_specs()),
+                "bases": telltales.names(),   # any tell-tale can be a compose base
+            })
+
+        # --- icon editor: parametric composed icons -----------------
+        if seg == ["compose"] and method == "GET":
+            from . import compose
+
+            return self._json(compose.all_specs())
+
+        if seg == ["compose", "preview"] and method == "POST":
+            from . import compose
+
+            body = self._read_body()
+            spec = body.get("spec", body)
+            return self._raw(compose.render(spec, body.get("fg", "#ffffff"), 256), "image/png")
+
+        if len(seg) == 2 and seg[0] == "compose":
+            from . import compose
+
+            name = seg[1]
+            if method == "GET":
+                specs = compose.all_specs()
+                if name not in specs:
+                    raise FileNotFoundError(name)
+                return self._json(specs[name])
+            if method == "PUT":
+                body = self._read_body()
+                compose.save_user_spec(name, body.get("spec", body))
+                d.request_repush()
+                return self._json({"ok": True})
+            if method == "DELETE":
+                compose.save_user_spec(name, None)
+                d.request_repush()
+                return self._json({"ok": True})
 
         if seg == ["font"] and method == "GET":
             from . import glyphs
@@ -280,8 +317,9 @@ class Handler(BaseHTTPRequestHandler):
         if seg == ["icons"] and method == "POST":
             return self._json(_save_icon(self._read_raw_body()))
         if len(seg) == 2 and seg[0] == "icons" and method == "GET":
-            f = (config.CONFIG_DIR / "icons" / seg[1]).resolve()
-            if (config.CONFIG_DIR / "icons").resolve() in f.parents and f.is_file():
+            base = config.upload_icons_dir().resolve()
+            f = (base / seg[1]).resolve()
+            if base in f.parents and f.is_file():
                 return self._raw(f.read_bytes(), "image/png")
             raise FileNotFoundError(seg[1])
 

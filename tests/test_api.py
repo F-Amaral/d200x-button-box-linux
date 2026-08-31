@@ -31,6 +31,9 @@ class FakeDaemon:
     def request_reload(self):
         self.calls.append(("reload",))
 
+    def request_repush(self):
+        self.calls.append(("repush",))
+
     def request_profile(self, spec):
         self.calls.append(("profile", spec))
 
@@ -172,6 +175,46 @@ def test_icon_upload_and_fetch(client, tmp_path):
     status, png = call("GET", res["url"], raw=True)
     assert status == 200
     assert Image.open(io.BytesIO(png)).size == (196, 196)
+
+
+def test_compose_editor_roundtrip(client, tmp_path):
+    import io
+
+    from PIL import Image
+
+    from d200x_button_box import compose, telltales
+
+    call, daemon = client
+
+    # built-ins are listed, none customised yet
+    status, all_specs = call("GET", "/api/compose")
+    assert status == 200 and all_specs["seat_fore"]["builtin"] is True
+    assert all_specs["seat_fore"]["customised"] is False
+
+    # preview renders without saving
+    spec = compose.effective_spec("seat_fore")
+    spec["layers"][0]["at"] = [0.54, 0.80]  # nudge the arrow down
+    status, png = call("POST", "/api/compose/preview", {"spec": spec}, raw=True)
+    assert status == 200 and Image.open(io.BytesIO(png)).size == (256, 256)
+    assert not compose._user_yaml().exists()
+
+    # save -> icons.yaml written, PNG rendered, deck re-push requested
+    status, res = call("PUT", "/api/compose/seat_fore", {"spec": spec})
+    assert status == 200 and res["ok"] is True
+    assert ("repush",) in daemon.calls
+    assert compose.user_specs()["seat_fore"]["layers"][0]["at"] == [0.54, 0.80]
+    gen = config.user_icons_dir() / "seat_fore.png"
+    assert gen.is_file()
+    assert telltales._path("seat_fore") == gen  # resolver now prefers it
+
+    status, one = call("GET", "/api/compose/seat_fore")
+    assert one["customised"] is True
+
+    # reset -> override + PNG gone
+    status, _ = call("DELETE", "/api/compose/seat_fore")
+    assert status == 200
+    assert "seat_fore" not in compose.user_specs()
+    assert not gen.exists()
 
 
 def test_sse_sends_initial_state(client):

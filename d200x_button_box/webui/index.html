@@ -80,6 +80,7 @@
   <span id="status"></span>
   <button id="importBtn" class="ghost">Import from game</button>
   <button id="listenBtn" class="ghost">Listen</button>
+  <button id="iconsBtn" class="ghost">Icons</button>
   <button id="settingsBtn" class="ghost">Settings</button>
   <label style="display:flex;gap:.35rem;align-items:center;font-size:13px;color:var(--mut)">
     <input type="checkbox" id="autosave"> autosave
@@ -133,6 +134,36 @@
   <div class="dlg-actions"><button id="ig_reset" class="ghost">use page default</button><button id="ig_cancel" class="ghost">Cancel</button><button id="ig_use" class="primary">Use this icon</button></div>
 </dialog>
 
+<dialog id="composeDlg" style="max-width:44rem">
+  <h3>Icon editor</h3>
+  <div style="display:flex;gap:1.2rem;align-items:flex-start;flex-wrap:wrap">
+    <div style="display:flex;flex-direction:column;gap:.5rem">
+      <div style="display:flex;gap:.5rem">
+        <img id="c_prev_d" width="120" height="120" style="background:#0d0f13;border:1px solid var(--line);border-radius:8px" alt="">
+        <img id="c_prev_l" width="120" height="120" style="background:#e9ecf1;border:1px solid var(--line);border-radius:8px" alt="">
+      </div>
+      <div class="fld"><label>Icon</label><select id="c_name"></select></div>
+      <div class="hint" id="c_state"></div>
+    </div>
+    <div style="flex:1;min-width:260px">
+      <div class="fld"><label>Base</label><select id="c_base"></select></div>
+      <div class="fld"><label>Scale</label><input id="c_scale" type="number" step="0.01" min="0.05" max="2"></div>
+      <div class="fld"><label>Pos X / Y</label><span><input id="c_bx" type="number" step="0.01" style="width:5rem"> <input id="c_by" type="number" step="0.01" style="width:5rem"></span></div>
+      <div style="border-top:1px solid var(--line);margin:.6rem 0;padding-top:.4rem">
+        <b style="font-size:13px">Layers</b>
+        <div id="c_layers" style="display:flex;flex-direction:column;gap:.4rem;margin:.4rem 0"></div>
+        <div style="display:flex;gap:.35rem;flex-wrap:wrap">
+          <button class="ghost" data-add="arrow">+ arrow</button>
+          <button class="ghost" data-add="arc">+ arc</button>
+          <button class="ghost" data-add="line">+ line</button>
+          <button class="ghost" data-add="tick">+ tick</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dlg-actions"><button id="c_reset" class="ghost">Reset to built-in</button><button id="c_cancel" class="ghost">Cancel</button><button id="c_save" class="primary">Save</button></div>
+</dialog>
+
 <script>
 const KEY_ROWS=[[0,1,2,3,4],[5,6,7,8,9],[10,11,12,13]];
 const AUX_L=15,AUX_R=16,STATUS=13,KNOBS=[17,18,19];
@@ -141,6 +172,9 @@ const ACTION_HINT={gamepad:"virtual joystick button the game binds",key:"keystro
 
 let S={name:null,profile:null,page:0,sel:null,listening:false,profiles:[],settings:null,es:null,dirty:false,autosave:false,homeKey:null,saveT:null,bindGame:null};
 let GAMES={}, GAME_CONTROLS={};
+let COMPOSED_NAMES=new Set();
+let ICONV=0;  // bumped after an icon-editor save to bust cached previews
+const bumpIcons=()=>{ ICONV++; };
 
 const api=(p,o={})=>fetch("api/"+p,o).then(r=>{if(!r.ok)return r.text().then(t=>Promise.reject(t||r.status));const c=r.headers.get("content-type")||"";return c.includes("json")?r.json():r;});
 const $=s=>document.querySelector(s);
@@ -169,6 +203,7 @@ async function boot(){
   const pl=await api("profiles"); S.profiles=pl.profiles; S.name=pl.active;
   S.settings=await api("settings"); S.homeKey=S.settings.home.key;
   GAMES=await api("games").catch(()=>({}));
+  COMPOSED_NAMES=new Set(await api("glyphs").then(g=>g.composed||[]).catch(()=>[]));
   S.bindGame=Object.entries(GAMES).find(([,g])=>g.can_write&&g.path)?.[0]||null;
   await loadProfile(S.name);
   connectSSE();
@@ -271,6 +306,7 @@ function previewURL(b){
   else if(b.icon_text) q.set("text",b.icon_text);
   else if(b.label) q.set("label",b.label);          // server picks a glyph or falls back to initials
   STYLE_KEYS.forEach(k=>{ if(s[k]) q.set(k,s[k]); });
+  if(ICONV) q.set("v",ICONV);
   return "api/icon-preview?"+q;
 }
 
@@ -410,6 +446,12 @@ function renderEditor(){
     const style=el("button",{class:"ghost",textContent:b.icon?"image":"style"});
     style.onclick=()=>openIconGen(b);
     iconCtl.append(style);
+    const gl=autoGlyph(b);
+    if(!b.icon && COMPOSED_NAMES.has(gl)){
+      const cust=el("button",{class:"ghost",textContent:"customise "+gl});
+      cust.onclick=()=>openCompose(gl);
+      iconCtl.append(cust);
+    }
     const file=el("input",{type:"file",accept:"image/*",style:"max-width:11rem"});
     file.onchange=async()=>{
       if(!file.files[0])return;
@@ -553,9 +595,135 @@ $("#ig_use").onclick=()=>{
   $("#iconGen").close();
 };
 
+// ---- icon editor (parametric composed icons) ----------------
+let C={all:null,name:null,spec:null,t:null,url:null,openLayer:-1};
+const C_FIELDS={
+  arrow:[["at","vec"],["dir","dir"],["len","n"],["head","n"],["w","n"]],
+  arc:[["at","vec"],["r","n"],["deg","deg"],["arrow","end"],["w","n"],["head","n"]],
+  line:[["from","vec"],["to","vec"],["w","n"]],
+  tick:[["at","vec"],["dir","dir"],["len","n"],["w","n"]],
+};
+const C_NEW={
+  arrow:{type:"arrow",at:[0.5,0.5],dir:"up",len:0.3,head:0.12,w:0.05},
+  arc:{type:"arc",at:[0.5,0.5],r:0.16,deg:[0,270],arrow:"end",w:0.04,head:0.07},
+  line:{type:"line",from:[0.1,0.9],to:[0.9,0.9],w:0.045},
+  tick:{type:"tick",at:[0.4,0.5],dir:"up",len:0.06,w:0.035},
+};
+async function openCompose(pick){
+  C.all=await api("compose");
+  const sel=$("#c_name"); sel.innerHTML="";
+  for(const n of Object.keys(C.all).sort())
+    sel.append(el("option",{value:n,textContent:n+(C.all[n].customised?"  ✓":"")}));
+  const bsel=$("#c_base"); bsel.innerHTML=""; bsel.append(el("option",{value:"",textContent:"(none)"}));
+  try{ const g=await api("glyphs"); for(const b of (g.bases||[])) bsel.append(el("option",{value:b,textContent:b})); }catch(e){}
+  cLoad(pick&&C.all[pick]?pick:sel.value);
+  $("#composeDlg").showModal();
+}
+function cLoad(name){
+  C.name=name; C.openLayer=-1;
+  $("#c_name").value=name;
+  C.spec=JSON.parse(JSON.stringify(C.all[name].spec||{}));
+  if(!Array.isArray(C.spec.layers)) C.spec.layers=[];
+  $("#c_base").value=C.spec.base||"";
+  $("#c_scale").value=C.spec.base_scale??1;
+  const at=C.spec.base_at||[0.5,0.5];
+  $("#c_bx").value=at[0]; $("#c_by").value=at[1];
+  cLayers(); cPreview(); cState();
+}
+function cState(){
+  const cz=C.all[C.name]&&C.all[C.name].customised;
+  $("#c_state").textContent=cz?"customised — overrides the built-in":"built-in default";
+  $("#c_reset").disabled=!cz;
+}
+function cPreview(){
+  clearTimeout(C.t);
+  C.t=setTimeout(async()=>{
+    try{
+      const r=await fetch("api/compose/preview",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({spec:C.spec})});
+      if(!r.ok) return;
+      const u=URL.createObjectURL(await r.blob());
+      $("#c_prev_d").src=u; $("#c_prev_l").src=u;
+      if(C.url) URL.revokeObjectURL(C.url);
+      C.url=u;
+    }catch(e){}
+  },120);
+}
+function cLayers(){
+  const box=$("#c_layers"); box.innerHTML="";
+  if(!C.spec.layers.length){ box.append(el("div",{class:"hint",textContent:"no overlay layers"})); }
+  C.spec.layers.forEach((ly,i)=>{
+    const d=el("details",{style:"border:1px solid var(--line);border-radius:6px;padding:.25rem .45rem"});
+    d.open=(C.openLayer===i);
+    const sum=el("summary",{textContent:ly.type+(ly.dir!=null?" · "+ly.dir:(ly.arrow?" · "+ly.arrow:"")),style:"cursor:pointer;font-size:12px"});
+    const del=el("button",{class:"ghost",textContent:"✕",title:"remove",style:"float:right;padding:0 .35rem"});
+    del.onclick=e=>{ e.preventDefault(); C.spec.layers.splice(i,1); C.openLayer=-1; cLayers(); cPreview(); };
+    const up=el("button",{class:"ghost",textContent:"↑",title:"move up",style:"float:right;padding:0 .35rem"});
+    up.onclick=e=>{ e.preventDefault(); if(i>0){ const L=C.spec.layers; [L[i-1],L[i]]=[L[i],L[i-1]]; C.openLayer=i-1; cLayers(); cPreview(); } };
+    sum.append(del,up); d.append(sum);
+    const body=el("div",{style:"padding:.35rem 0 .15rem;display:flex;flex-direction:column;gap:.3rem"});
+    for(const [key,kind] of C_FIELDS[ly.type]) body.append(cField(ly,key,kind));
+    d.append(body);
+    d.ontoggle=()=>{ if(d.open) C.openLayer=i; };
+    box.append(d);
+  });
+}
+function cField(ly,key,kind){
+  const w=el("label",{style:"display:flex;gap:.4rem;align-items:center;font-size:12px"},[el("span",{textContent:key,style:"width:3rem;color:var(--mut)"})]);
+  const num=(get,set,step)=>{ const inp=el("input",{type:"number",step:step||"0.01",value:get(),style:"width:4.5rem"}); inp.oninput=()=>{ set(+inp.value); cPreview(); }; return inp; };
+  if(kind==="vec"){
+    const a=ly[key]||[0.5,0.5]; ly[key]=a;
+    w.append(num(()=>a[0],v=>a[0]=v), num(()=>a[1],v=>a[1]=v));
+  }else if(kind==="deg"){
+    const a=ly.deg||[0,270]; ly.deg=a;
+    w.append(num(()=>a[0],v=>a[0]=v,"5"), num(()=>a[1],v=>a[1]=v,"5"));
+  }else if(kind==="dir"){
+    const inp=el("input",{type:"text",value:ly.dir??"up",style:"width:6rem"});
+    inp.oninput=()=>{ const v=inp.value.trim(); ly.dir=(v!==""&&!isNaN(+v))?+v:v; cPreview(); };
+    w.append(inp, el("span",{class:"hint",textContent:"up/down/left/right or °"}));
+  }else if(kind==="end"){
+    const sel=el("select",{},["none","start","end"].map(o=>el("option",{value:o,textContent:o})));
+    sel.value=ly.arrow||"none";
+    sel.onchange=()=>{ if(sel.value==="none") delete ly.arrow; else ly.arrow=sel.value; cPreview(); };
+    w.append(sel);
+  }else{
+    w.append(num(()=>ly[key]??0.1,v=>ly[key]=v));
+  }
+  return w;
+}
+$("#c_base").onchange=()=>{ const v=$("#c_base").value; if(v) C.spec.base=v; else delete C.spec.base; cPreview(); };
+$("#c_scale").oninput=()=>{ C.spec.base_scale=+$("#c_scale").value; cPreview(); };
+const cAt=()=>{ C.spec.base_at=[+$("#c_bx").value,+$("#c_by").value]; cPreview(); };
+$("#c_bx").oninput=cAt; $("#c_by").oninput=cAt;
+$("#c_name").onchange=()=>cLoad($("#c_name").value);
+document.querySelectorAll("#composeDlg [data-add]").forEach(btn=>btn.onclick=e=>{
+  e.preventDefault();
+  C.spec.layers.push(JSON.parse(JSON.stringify(C_NEW[btn.dataset.add])));
+  C.openLayer=C.spec.layers.length-1;
+  cLayers(); cPreview();
+});
+$("#c_cancel").onclick=()=>$("#composeDlg").close();
+$("#c_save").onclick=async()=>{
+  try{
+    await api("compose/"+encodeURIComponent(C.name),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({spec:C.spec})});
+    C.all[C.name]={spec:JSON.parse(JSON.stringify(C.spec)),builtin:(C.all[C.name]||{}).builtin!==false,customised:true};
+    for(const o of $("#c_name").options) if(o.value===C.name && !o.textContent.endsWith("✓")) o.textContent=C.name+"  ✓";
+    cState(); bumpIcons(); renderDeck();
+  }catch(e){ alert("Save failed: "+e); }
+};
+$("#c_reset").onclick=async()=>{
+  if(!confirm("Discard your changes to "+C.name+" and revert to the built-in icon?")) return;
+  try{
+    await api("compose/"+encodeURIComponent(C.name),{method:"DELETE"});
+    C.all=await api("compose");
+    for(const o of $("#c_name").options) if(o.value===C.name) o.textContent=C.name+(C.all[C.name]&&C.all[C.name].customised?"  ✓":"");
+    bumpIcons(); cLoad(C.name); renderDeck();
+  }catch(e){ alert("Reset failed: "+e); }
+};
+
 // ---- header wiring -------------------------------------------
 $("#saveBtn").onclick=save;
 $("#settingsBtn").onclick=openSettings;
+$("#iconsBtn").onclick=()=>openCompose();
 $("#importBtn").onclick=openImport;
 $("#listenBtn").onclick=()=>{ S.listening=!S.listening; $("#listenBtn").classList.toggle("on",S.listening); $("#listenBtn").textContent=S.listening?"Listening…":"Listen"; };
 $("#autosave").onchange=e=>{ S.autosave=e.target.checked; localStorage.setItem("d200x.autosave",S.autosave?"1":"0"); if(S.autosave&&S.dirty)save(); renderStatus(); };

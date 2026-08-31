@@ -41,6 +41,7 @@ class Daemon:
         self._queued_page: str | None = None         # page: binding, applied next tick
         self._home_revert_at: float | None = None     # monotonic deadline to drop back to auto
         self._reload_now = False
+        self._repush = False
         self._run = True
         self._subs: list[queue.Queue] = []            # SSE subscribers (API layer)
         self._httpd = None                            # set by api.serve()
@@ -85,6 +86,10 @@ class Daemon:
     def request_reload(self) -> None:
         """Ask the main loop to re-check the config files now (not in ~1s)."""
         self._reload_now = True
+
+    def request_repush(self) -> None:
+        """Re-upload the current page's layout (e.g. an icon asset changed)."""
+        self._repush = True
 
     @property
     def settings(self) -> Settings:
@@ -362,6 +367,12 @@ class Daemon:
         except ValueError:
             pass  # not the main thread (test harness / embedded)
 
+        try:
+            from . import compose
+            compose.render_user_icons()  # refresh generated/ from icons.yaml
+        except Exception:  # noqa: BLE001
+            log.exception("could not render user icons")
+
         if self.dev is None and not self._connect_device():
             log.warning("D200x not connected -- API is up; retrying every %.0fs", _RECONNECT_POLL)
         log.info("running (profile: %s) -- ctrl-c to quit", self.store.active_name)
@@ -412,6 +423,10 @@ class Daemon:
                     self._kbd.enabled = self.settings.grab_keyboard
                     self._activate()
                 last_reload = now
+            if self._repush:
+                self._repush = False
+                if self.dev is not None:
+                    self.push_layout()
 
             time.sleep(0.02 if self.dev is None else 0.005)
 

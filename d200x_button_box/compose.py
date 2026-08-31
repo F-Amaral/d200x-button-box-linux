@@ -1,9 +1,14 @@
 """Parametric icon composition -- a base tell-tale + drawn overlays.
 
-This is a **generator**: `tools/build-composed-icons.py` renders each spec in
-`COMPOSED` to a committed PNG in `assets/telltales/`. It's the path for any
-future "combine two symbols / add an arrow" icon -- edit a spec (data, not
-code), re-run the tool, commit the PNG.
+Two ways a spec becomes an icon PNG:
+
+* **built-ins** -- `tools/build-composed-icons.py` renders `COMPOSED` to
+  committed PNGs in `assets/telltales/` (the shipped defaults).
+* **user edits** -- the web icon editor saves specs to
+  `~/.config/d200x-button-box/icons.yaml`; the daemon renders each to
+  `~/.config/d200x-button-box/icons/<name>.png`, which the icon resolver
+  prefers over the bundled version. `user_specs()` / `save_user_spec()` /
+  `render_user_icons()` here; `config.user_icons_dir()` is the output.
 
 A spec is a plain dict. All coordinates and sizes are fractions of the output
 square (0..1):
@@ -32,11 +37,90 @@ _DIRS = {"right": 0.0, "down": 90.0, "left": 180.0, "up": 270.0}
 
 
 def names() -> tuple[str, ...]:
+    """Built-in composed-icon names (the ones with a shipped PNG)."""
     return tuple(COMPOSED)
 
 
 def has(name: str) -> bool:
     return name in COMPOSED
+
+
+# --- user specs (editor) ------------------------------------------------
+def _user_yaml():
+    from .config import CONFIG_DIR
+
+    return CONFIG_DIR / "icons.yaml"
+
+
+def user_specs() -> dict[str, dict]:
+    try:
+        import yaml
+
+        p = _user_yaml()
+        if p.is_file():
+            return {k: v for k, v in (yaml.safe_load(p.read_text()) or {}).items()
+                    if isinstance(v, dict)}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+def effective_spec(name: str) -> dict | None:
+    """The spec that would render `name`: user override, else built-in."""
+    u = user_specs()
+    if name in u:
+        return u[name]
+    return COMPOSED.get(name)
+
+
+def all_specs() -> dict[str, dict]:
+    """{name: {spec, builtin, customised}} for every composed icon we know."""
+    u = user_specs()
+    out: dict[str, dict] = {}
+    for n, s in COMPOSED.items():
+        out[n] = {"spec": u.get(n, s), "builtin": True, "customised": n in u}
+    for n, s in u.items():
+        if n not in out:
+            out[n] = {"spec": s, "builtin": False, "customised": True}
+    return out
+
+
+def save_user_spec(name: str, spec: dict | None) -> None:
+    """Set (spec) or clear (None) a user override, then re-render the PNGs."""
+    import yaml
+
+    p = _user_yaml()
+    data = {}
+    if p.is_file():
+        data = yaml.safe_load(p.read_text()) or {}
+    if spec is None:
+        data.pop(name, None)
+    else:
+        data[name] = spec
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    render_user_icons()
+
+
+def render_user_icons() -> int:
+    """Render every user spec to CONFIG_DIR/icons/<name>.png; prune removed ones."""
+    from .config import user_icons_dir
+
+    out = user_icons_dir()
+    specs = user_specs()
+    out.mkdir(parents=True, exist_ok=True)
+    for name, spec in specs.items():
+        (out / f"{_safe(name)}.png").write_bytes(render(spec, "#ffffff", 256))
+    keep = {f"{_safe(n)}.png" for n in specs}
+    for f in out.glob("*.png"):
+        if f.name not in keep:
+            f.unlink()
+    return len(specs)
+
+
+def _safe(name: str) -> str:
+    keep = "".join(c for c in (name or "") if c.isalnum() or c in "-_")
+    return keep or "icon"
 
 
 def _pil():

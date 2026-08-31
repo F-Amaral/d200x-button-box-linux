@@ -3,6 +3,9 @@
 Bundled as white-on-transparent PNGs in ``assets/telltales/``; `tint()`
 recolours one to any style colour at render time (pure Pillow, no SVG
 dependency). Provenance: ``assets/telltales/CREDITS.md``.
+
+A user-generated PNG in ``config.user_icons_dir()`` (rendered from an
+``icons.yaml`` spec by the icon editor) shadows a bundled one of the same name.
 """
 
 from __future__ import annotations
@@ -14,23 +17,41 @@ from pathlib import Path
 _DIR = Path(__file__).parent / "assets" / "telltales"
 
 
+def _user_dir() -> Path:
+    from .config import user_icons_dir
+
+    return user_icons_dir()
+
+
+def _path(name: str) -> Path | None:
+    u = _user_dir() / f"{name}.png"
+    if u.is_file():
+        return u
+    b = _DIR / f"{name}.png"
+    return b if b.is_file() else None
+
+
 @functools.lru_cache(maxsize=1)
-def names() -> tuple[str, ...]:
-    return tuple(sorted(p.stem for p in _DIR.glob("*.png")))
+def _bundled() -> frozenset[str]:
+    return frozenset(p.stem for p in _DIR.glob("*.png"))
+
+
+def names() -> list[str]:
+    extra = {p.stem for p in _user_dir().glob("*.png")} if _user_dir().is_dir() else set()
+    return sorted(_bundled() | extra)
 
 
 def has(name: str) -> bool:
-    return (name or "") in names()
+    return _path(name or "") is not None
 
 
-@functools.lru_cache(maxsize=64)
 def _silhouette(name: str):
     from PIL import Image
 
-    return Image.open(_DIR / f"{name}.png").convert("RGBA").copy()
+    return Image.open(_path(name)).convert("RGBA")
 
 
-def tint(name: str, colour: str, size: int) -> "bytes":
+def tint(name: str, colour: str, size: int) -> bytes:
     """A `size`x`size` RGBA PNG of tell-tale `name` filled with `colour`."""
     from PIL import Image, ImageOps
 
