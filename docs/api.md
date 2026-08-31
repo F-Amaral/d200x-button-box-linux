@@ -44,7 +44,12 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 | POST | `/api/icons` | raw image bytes (`Content-Type: image/*`) | saves a 196×196 PNG, returns `{path, url}` |
 | GET | `/api/icons/<name>` | | serves an uploaded icon |
 | GET | `/api/icon-preview?text=&glyph=&label=&mode=&shape=&border=&fill=&fg=&font=` | | renders a generated icon PNG (`label` → auto glyph or initials) |
-| GET | `/api/glyphs` | | `{names: [...], aliases: {...}}` — the bundled glyph set |
+| GET | `/api/glyphs` | | `{names, aliases, composed, bases}` — the glyph set + composed-icon names + tell-tale base names |
+| GET | `/api/compose` | | `{name: {spec, builtin, customised}}` for every composed icon |
+| GET | `/api/compose/<name>` | | one composed icon's effective spec + flags |
+| PUT | `/api/compose/<name>` | `{spec}` | save a user override → render PNG → re-push the deck |
+| DELETE | `/api/compose/<name>` | | drop the user override (revert to built-in) |
+| POST | `/api/compose/preview` | `{spec, fg?}` | render a spec to a PNG without saving; returns `image/png` |
 | GET | `/api/font` | | the bundled Material Icons OTF (for `@font-face`) |
 | GET | `/api/events` | | SSE stream (below) |
 | GET | `/` … | | the web UI |

@@ -369,7 +369,7 @@ class Daemon:
 
         try:
             from . import compose
-            compose.render_user_icons()  # refresh generated/ from icons.yaml
+            compose.render_user_icons(only_missing=True)  # fill gaps in generated/
         except Exception:  # noqa: BLE001
             log.exception("could not render user icons")
 

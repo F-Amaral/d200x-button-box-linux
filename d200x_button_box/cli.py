@@ -140,6 +140,21 @@ def cmd_enum(args) -> int:
     return 0
 
 
+def cmd_icons(args) -> int:
+    from . import compose
+
+    if args.icons_cmd == "promote":
+        for name in args.names:
+            try:
+                png = compose.promote_spec(name)
+            except KeyError:
+                print(f"unknown composed icon: {name}", file=sys.stderr)
+                return 1
+            print(f"promoted {name} -> {png}")
+        print("now commit the PNG(s) + d200x_button_box/assets/composed.yaml")
+    return 0
+
+
 def cmd_status(args) -> int:
     _setup_log("WARNING")
     from .device import Device
@@ -187,6 +202,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("profiles", help="list profiles").set_defaults(func=cmd_profiles)
     sub.add_parser("enum", help="list the deck's HID interfaces + perms").set_defaults(func=cmd_enum)
     sub.add_parser("status", help="check the deck is reachable").set_defaults(func=cmd_status)
+
+    ic = sub.add_parser("icons", help="composed-icon maintenance (for repo maintainers)")
+    ics = ic.add_subparsers(dest="icons_cmd", required=True)
+    pr = ics.add_parser("promote", help="bake a tuned icon into the shipped defaults + assets/composed.yaml")
+    pr.add_argument("names", nargs="+", metavar="NAME", help="composed-icon name(s), e.g. seat_fore")
+    ic.set_defaults(func=cmd_icons)
     return p
 
 

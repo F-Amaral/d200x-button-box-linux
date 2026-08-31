@@ -29,6 +29,7 @@ layers:
 | source | file | precedence |
 |--|--|--|
 | built-in | `compose.COMPOSED` (code) | lowest |
+| maintainer | `d200x_button_box/assets/composed.yaml` (committed, from `icons promote`) | middle |
 | user | `~/.config/d200x-button-box/icons.yaml` (`{name: spec}`) | highest |
 
 On save the daemon **renders** each user spec to
@@ -42,8 +43,12 @@ gains a step:
 So a customised `engine_start` overrides the bundled one; a brand-new
 `my_tc_plus` becomes a pickable glyph. "Reset" deletes the user spec + PNG.
 
-The bundled PNGs and `compose.COMPOSED` stay as the shipped defaults — the
-editor never writes into the package.
+The daemon never writes into the package on a normal save. `promote_spec()` —
+only via `d200x-button-box icons promote <name>` (a maintainer action, needs a
+writable source tree) — is the one path that writes `assets/composed.yaml` +
+the committed PNG and clears the user override. `compose.COMPOSED` is merged
+with `composed.yaml` at import; `render_user_icons(only_missing=True)` at daemon
+startup fills gaps in `generated/` without pruning (a hand-edited PNG survives).
 
 ## API
 

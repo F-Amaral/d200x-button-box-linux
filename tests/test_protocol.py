@@ -175,6 +175,43 @@ def test_compose_render_is_deterministic_and_tinted():
         assert px and all(p[0] > 180 and p[1] < 80 and p[2] < 80 for p in px)
 
 
+def test_render_user_icons_only_missing_and_promote(tmp_path, monkeypatch):
+    import os
+    import time
+
+    import yaml
+
+    from d200x_button_box import compose
+
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+    assets = tmp_path / "assets"
+    (assets / "telltales").mkdir(parents=True)
+    monkeypatch.setattr(compose, "_bundled_yaml", lambda: assets / "composed.yaml")
+    monkeypatch.setitem(compose.COMPOSED, "seat_fore", compose.COMPOSED["seat_fore"])
+
+    spec = compose.effective_spec("seat_fore")
+    spec["base_scale"] = 0.9
+    compose.save_user_spec("seat_fore", spec)
+    gen = config.user_icons_dir() / "seat_fore.png"
+    assert gen.is_file()
+    rendered = gen.read_bytes()
+
+    # a newer hand-edited generated PNG survives the startup (only_missing) pass
+    gen.write_bytes(b"HANDEDIT")
+    os.utime(gen, (time.time() + 10, time.time() + 10))
+    compose.render_user_icons(only_missing=True)
+    assert gen.read_bytes() == b"HANDEDIT"
+    compose.render_user_icons()                      # full pass restores it
+    assert gen.read_bytes() == rendered
+
+    png = compose.promote_spec("seat_fore")
+    assert png == assets / "telltales" / "seat_fore.png" and png.is_file()
+    assert yaml.safe_load((assets / "composed.yaml").read_text())["seat_fore"]["base_scale"] == 0.9
+    assert "seat_fore" not in compose.user_specs()   # override cleared
+    assert not gen.exists()
+    assert compose.effective_spec("seat_fore")["base_scale"] == 0.9  # now the default
+
+
 def test_settings_roundtrip(tmp_path):
     s = config.Settings(brightness=55, pulse_ms=80, active_profile="lmu")
     s.auto_detect = {"lmu": ["LeMansUltimate"]}

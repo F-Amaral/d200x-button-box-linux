@@ -1,14 +1,17 @@
 """Parametric icon composition -- a base tell-tale + drawn overlays.
 
-Two ways a spec becomes an icon PNG:
+Precedence (lowest to highest):
 
-* **built-ins** -- `tools/build-composed-icons.py` renders `COMPOSED` to
-  committed PNGs in `assets/telltales/` (the shipped defaults).
-* **user edits** -- the web icon editor saves specs to
-  `~/.config/d200x-button-box/icons.yaml`; the daemon renders each to
-  `~/.config/d200x-button-box/icons/<name>.png`, which the icon resolver
-  prefers over the bundled version. `user_specs()` / `save_user_spec()` /
-  `render_user_icons()` here; `config.user_icons_dir()` is the output.
+* **`COMPOSED`** (this file) -- the shipped defaults, as parametric dicts.
+* **`assets/composed.yaml`** -- maintainer tweaks made in the editor and
+  promoted with `d200x-button-box icons promote` (`promote_spec()`); committed,
+  merged over `COMPOSED` at import.
+* **`~/.config/d200x-button-box/icons.yaml`** -- a user's own edits from the
+  web editor (`user_specs()` / `save_user_spec()`), rendered to
+  `config.user_icons_dir()/<name>.png` which the icon resolver prefers.
+
+`tools/build-composed-icons.py` renders the resolved `COMPOSED` (defaults +
+`composed.yaml`) to the committed PNGs in `assets/telltales/`.
 
 A spec is a plain dict. All coordinates and sizes are fractions of the output
 square (0..1):
@@ -66,22 +69,25 @@ def user_specs() -> dict[str, dict]:
 
 
 def effective_spec(name: str) -> dict | None:
-    """The spec that would render `name`: user override, else built-in."""
+    """A copy of the spec that would render `name`: user override, else built-in."""
+    import copy
+
     u = user_specs()
-    if name in u:
-        return u[name]
-    return COMPOSED.get(name)
+    s = u[name] if name in u else COMPOSED.get(name)
+    return copy.deepcopy(s) if s is not None else None
 
 
 def all_specs() -> dict[str, dict]:
     """{name: {spec, builtin, customised}} for every composed icon we know."""
+    import copy
+
     u = user_specs()
     out: dict[str, dict] = {}
     for n, s in COMPOSED.items():
-        out[n] = {"spec": u.get(n, s), "builtin": True, "customised": n in u}
+        out[n] = {"spec": copy.deepcopy(u.get(n, s)), "builtin": True, "customised": n in u}
     for n, s in u.items():
         if n not in out:
-            out[n] = {"spec": s, "builtin": False, "customised": True}
+            out[n] = {"spec": copy.deepcopy(s), "builtin": False, "customised": True}
     return out
 
 
@@ -102,20 +108,64 @@ def save_user_spec(name: str, spec: dict | None) -> None:
     render_user_icons()
 
 
-def render_user_icons() -> int:
-    """Render every user spec to CONFIG_DIR/icons/<name>.png; prune removed ones."""
+def render_user_icons(*, only_missing: bool = False) -> int:
+    """Render user specs to ``config.user_icons_dir()/<name>.png``.
+
+    ``only_missing`` (daemon startup): render just the specs whose PNG is
+    absent or older than ``icons.yaml``, and never delete -- so a hand-tweaked
+    ``generated/`` PNG survives a restart. The default (called after an editor
+    save) rewrites everything and prunes overrides that were removed.
+    """
     from .config import user_icons_dir
 
     out = user_icons_dir()
     specs = user_specs()
+    if not specs and not out.is_dir():
+        return 0
     out.mkdir(parents=True, exist_ok=True)
+    ym = _user_yaml().stat().st_mtime if _user_yaml().is_file() else 0.0
     for name, spec in specs.items():
-        (out / f"{_safe(name)}.png").write_bytes(render(spec, "#ffffff", 256))
-    keep = {f"{_safe(n)}.png" for n in specs}
-    for f in out.glob("*.png"):
-        if f.name not in keep:
-            f.unlink()
+        png = out / f"{_safe(name)}.png"
+        if only_missing and png.is_file() and png.stat().st_mtime >= ym:
+            continue
+        png.write_bytes(render(spec, "#ffffff", 256))
+    if not only_missing:
+        keep = {f"{_safe(n)}.png" for n in specs}
+        for f in out.glob("*.png"):
+            if f.name not in keep:
+                f.unlink()
     return len(specs)
+
+
+def _bundled_yaml():
+    """Maintainer-committed spec overrides, merged over the ``COMPOSED`` code dict."""
+    from pathlib import Path
+
+    return Path(__file__).parent / "assets" / "composed.yaml"
+
+
+def promote_spec(name: str) -> "Path":
+    """Maintainer action: bake a tuned icon into the shipped defaults.
+
+    Renders the current effective spec (a user override if present, else the
+    built-in) to the committed ``assets/telltales/<name>.png``, records it in
+    ``assets/composed.yaml``, and clears the ``icons.yaml`` override. Needs a
+    writable package dir -- run from a source checkout / editable install.
+    """
+    import yaml
+
+    spec = effective_spec(name)
+    if spec is None:
+        raise KeyError(name)
+    png = _bundled_yaml().parent / "telltales" / f"{_safe(name)}.png"
+    png.write_bytes(render(spec, "#ffffff", 256))
+    p = _bundled_yaml()
+    data = (yaml.safe_load(p.read_text()) if p.is_file() else {}) or {}
+    data[name] = spec
+    p.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    COMPOSED[name] = spec
+    save_user_spec(name, None)  # drop the override -- it's the default now
+    return png
 
 
 def _safe(name: str) -> str:
@@ -291,3 +341,21 @@ COMPOSED: dict[str, dict] = {
         ],
     },
 }
+
+
+def _merge_bundled_overrides() -> None:
+    """Apply maintainer tweaks from ``assets/composed.yaml`` (via `promote_spec`)."""
+    p = _bundled_yaml()
+    if not p.is_file():
+        return
+    try:
+        import yaml
+
+        for k, v in (yaml.safe_load(p.read_text()) or {}).items():
+            if isinstance(v, dict):
+                COMPOSED[k] = v
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_merge_bundled_overrides()

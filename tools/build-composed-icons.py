@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Render every spec in `d200x_button_box.compose.COMPOSED` to a committed
-white-on-transparent PNG in `assets/telltales/`.
+"""Render every composed-icon spec to a committed white-on-transparent PNG in
+`assets/telltales/`.
+
+Specs come from `compose.COMPOSED` (the parametric defaults in `compose.py`)
+overlaid with `assets/composed.yaml` (maintainer tweaks promoted from the web
+editor via `d200x-button-box icons promote`).
 
 Composed icons are a base ISO tell-tale + drawn arrows / arcs / lines, for
 symbols that don't exist as a single public-domain source (engine start, the
 seat-adjust family -- ISO 7000-1387/1428/1706/1707, none on Wikimedia Commons).
 
-Edit the specs in `compose.py`, run this, commit the PNGs.
+Edit `compose.py` (or `composed.yaml`), run this, commit the PNGs.
 """
 
 from __future__ import annotations

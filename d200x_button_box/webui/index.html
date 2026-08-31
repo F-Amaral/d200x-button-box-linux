@@ -159,6 +159,12 @@
           <button class="ghost" data-add="tick">+ tick</button>
         </div>
       </div>
+      <details style="margin-top:.6rem">
+        <summary style="font-size:12px;cursor:pointer;color:var(--mut)">spec (JSON) — for <code>assets/composed.yaml</code></summary>
+        <textarea id="c_json" readonly rows="9" style="width:100%;margin-top:.3rem;font:11px/1.4 ui-monospace,monospace;background:#0d0f13;color:var(--fg);border:1px solid var(--line);border-radius:6px"></textarea>
+        <button id="c_copy" class="ghost" style="margin-top:.2rem">copy</button>
+        <span class="hint">maintainer: paste into a spec, then <code>d200x-button-box icons promote &lt;name&gt;</code></span>
+      </details>
     </div>
   </div>
   <div class="dlg-actions"><button id="c_reset" class="ghost">Reset to built-in</button><button id="c_cancel" class="ghost">Cancel</button><button id="c_save" class="primary">Save</button></div>
@@ -636,6 +642,7 @@ function cState(){
   $("#c_reset").disabled=!cz;
 }
 function cPreview(){
+  const j=$("#c_json"); if(j) j.value=JSON.stringify(C.spec,null,2);
   clearTimeout(C.t);
   C.t=setTimeout(async()=>{
     try{
@@ -701,6 +708,7 @@ document.querySelectorAll("#composeDlg [data-add]").forEach(btn=>btn.onclick=e=>
   C.openLayer=C.spec.layers.length-1;
   cLayers(); cPreview();
 });
+$("#c_copy").onclick=e=>{ e.preventDefault(); navigator.clipboard?.writeText($("#c_json").value); };
 $("#c_cancel").onclick=()=>$("#composeDlg").close();
 $("#c_save").onclick=async()=>{
   try{

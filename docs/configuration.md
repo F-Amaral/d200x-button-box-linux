@@ -149,10 +149,25 @@ Icons** name; `GET /api/glyphs` lists them all. Tell-tales and composed icons
 are drawn frameless; everything else sits on the circle / rounded-square frame.
 
 Composed icons (`engine_start`, the `seat_*` family) are generated: a spec in
-`d200x_button_box/compose.py` describes a base ISO symbol + drawn arrows / arcs
-/ lines (coords as fractions of the icon square), and
+`d200x_button_box/compose.py` (`COMPOSED`) describes a base ISO symbol + drawn
+arrows / arcs / lines (coords as fractions of the icon square), and
 `tools/build-composed-icons.py` renders each to a committed PNG in
 `assets/telltales/`. To add or change one, edit `COMPOSED` and re-run the tool.
+
+### Adjusting an icon by hand
+
+The web UI's **Icons** button (or **customise `<glyph>`** on a key) opens a
+visual editor: pick a base, nudge scale / position, add arrow / arc / line /
+tick layers, live preview. **Save** stores your spec in
+`~/.config/d200x-button-box/icons.yaml` and renders it to
+`~/.config/d200x-button-box/generated/<name>.png`, which then shadows the
+bundled default. **Reset to built-in** removes your override.
+
+Maintainers propagating a tweak upstream: get it right in the editor, then
+`d200x-button-box icons promote <name>` bakes the spec into
+`assets/composed.yaml` + the committed `assets/telltales/<name>.png` and clears
+your override. Commit both. The **spec (JSON)** view in the editor shows the
+current spec for copy/paste.
 
 ```python
 # a spec
