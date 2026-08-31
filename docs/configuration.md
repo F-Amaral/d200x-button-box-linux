@@ -8,7 +8,20 @@ profiles/<name>.yaml     one or more pages of bindings for one context
 ```
 
 `d200x-button-box init` creates it with `settings.yaml` and the profiles
-`default`, `lmu`, `ac_evo`, `launcher`.
+`default`, `lmu`, `ac_evo`, `launcher`. Set `D200X_CONFIG_DIR` to use a
+different location.
+
+The generated profiles use a **stable** control → gamepad-button map, so it's
+safe to re-generate without breaking bindings you already made in a game:
+
+| control | button |
+|--|--|
+| LCD keys 0–12 | 1–13 |
+| wide status key | 14 |
+| aux L / aux R | home / page (buttons 15–16 reserved, unused) |
+| encoder 17 turn L / turn R / click | 17 / 18 / 19 |
+| encoder 18 | 20 / 21 / 22 |
+| encoder 19 | 23 / 24 / 25 |
 
 Editing `settings.yaml` or the **active** profile file takes effect within a
 second — no restart. The daemon reloads and the deck re-renders.
@@ -33,6 +46,9 @@ active_profile: launcher   # used when nothing else selects a profile
 auto_detect:               # profile -> case-insensitive substrings in /proc/*/cmdline
   lmu: [LeMansUltimate]
   ac_evo: [AssettoCorsaEVO, acevo]
+
+games:                     # install folders, for "import labels from a game"
+  lmu: /path/to/Le Mans Ultimate   # auto-filled from Steam libraries if found
 
 home:
   key: 15                  # control index that acts as "home" in every profile; null = off
@@ -130,6 +146,20 @@ keys:
 
 When you launch a game, `auto_detect` switches to its profile on its own; on
 quit it falls back to `launcher`.
+
+## Import labels from a game
+
+If you bound the **D200x Button Box** controller inside a game and don't
+remember which button is what, "Import from game" in the web UI (or
+`POST /api/profiles/<name>/import`) reads the game's own control config and
+writes the in-game control name into the `label` of every key / knob binding
+that uses that gamepad button.
+
+- **Le Mans Ultimate** — reads `UserData/player/direct input.json`. The install
+  folder is `games.lmu` in settings (auto-detected from Steam libraries).
+- Buttons bound in-game that aren't on any deck control are listed in the
+  import report so you can assign them.
+- `overwrite: false` keeps labels you typed by hand.
 
 ## The home button
 

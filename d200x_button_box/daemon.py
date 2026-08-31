@@ -37,7 +37,7 @@ class Daemon:
         self._queued_profile: str | None = None      # profile: binding, applied next tick
         self._queued_page: str | None = None         # page: binding, applied next tick
         self._home_revert_at: float | None = None     # monotonic deadline to drop back to auto
-        self._force_reload = False
+        self._reload_now = False
         self._run = True
         self._subs: list[queue.Queue] = []            # SSE subscribers (API layer)
         self._httpd = None                            # set by api.serve()
@@ -80,7 +80,8 @@ class Daemon:
         self._queued_page = spec
 
     def request_reload(self) -> None:
-        self._force_reload = True
+        """Ask the main loop to re-check the config files now (not in ~1s)."""
+        self._reload_now = True
 
     @property
     def settings(self) -> Settings:
@@ -328,10 +329,9 @@ class Daemon:
                 if now - last_detect > _DETECT_POLL:
                     detected = gamedetect.detect(self.settings.auto_detect)
                     last_detect = now
-                if self._force_reload or now - last_reload > _RELOAD_POLL:
-                    force = self._force_reload
-                    self._force_reload = False
-                    if self.store.resolve(detected=detected, force_reload=force):
+                if self._reload_now or now - last_reload > _RELOAD_POLL:
+                    self._reload_now = False
+                    if self.store.resolve(detected=detected):
                         self._activate()
                     last_reload = now
                 if self.settings.heartbeat_seconds and now - last_beat > self.settings.heartbeat_seconds:

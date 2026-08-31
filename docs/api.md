@@ -35,10 +35,14 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 | PUT | `/api/profiles/<name>` | profile dict | saved |
 | POST | `/api/profiles/<name>` | | create from the default template if missing |
 | DELETE | `/api/profiles/<name>` | | |
+| GET | `/api/games` | | `{lmu: {path}}` — importers + detected install folders |
+| POST | `/api/profiles/<name>/import` | `{game, path?, overwrite?}` | label the profile from the game's bindings; returns `{applied, skipped, unmatched}` |
 | POST | `/api/activate` | `{"profile": "lmu"｜"auto"}` | manual override |
 | POST | `/api/page` | `{"page": "next"｜"prev"｜N}` | |
+| POST | `/api/icons` | raw image bytes (`Content-Type: image/*`) | saves a 196×196 PNG, returns `{path, url}` |
+| GET | `/api/icons/<name>` | | serves an uploaded icon |
 | GET | `/api/events` | | SSE stream (below) |
-| GET | `/` … | | static web UI (phase 3) |
+| GET | `/` … | | the web UI |
 
 ## SSE stream (`/api/events`)
 

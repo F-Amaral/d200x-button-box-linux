@@ -37,15 +37,35 @@ Living doc. Move items between sections as they land.
 
 - `pytest -q` — parser, payload builder, config round-trips, event routing, API
 
-### Phase 3 — web UI
-- Single page, vanilla JS, no build step, served by the daemon
-- Deck grid (keys + aux + knobs), per-control binding panel
-- Icon: file upload **or** generator (text + glyph + bg colour)
-- Profile + page management (tabs)
-- "Listen" → SSE → capture the next deck press
-- Device settings page
-- Reachable at `http://<rig-ip>:<port>/` for phone-on-LAN live edits
-- `POST /api/preview` — temp-push an icon to one key (icon picker feedback)
+### Phase 3 — web UI (first cut done)
+- Single page, vanilla JS, no build step, served by the daemon at `/`
+- Deck grid laid out like the device; per-control binding editor
+  (gamepad / key / command / profile / page + label + icon + momentary)
+- Knob editor with left / right / click sub-bindings
+- Profile dropdown + page tabs, add profile / add page
+- Device settings dialog (brightness, heartbeat, grab, home)
+- "Listen" → SSE → select the next pressed control
+- Icon **file upload** → `POST /api/icons` (normalised to 196×196 PNG)
+- verified headless (Chrome-for-Testing + CDP): renders, edits, saves, persists
+- single-instance lock (`daemon.lock`, flock)
+
+Phase 3 polish (done):
+- redesigned layout — larger deck, centred, editor capped width, grouped fields with hints
+- home key badge on the deck grid
+- **autosave** toggle (localStorage) — debounced PUT; live deck preview follows edits
+- long values ellipsis + hover title
+- **Import labels from a game** — `gameimport.py` + `POST /api/profiles/<name>/import`
+  + UI dialog. LMU: parses `direct input.json`, id − 32 + 1 = our gamepad button.
+  Auto-detects the install folder from Steam libraries.
+- `games` in settings
+- **stable** control→button map in generated profiles (re-generate never shifts
+  bindings); `D200X_CONFIG_DIR` env override
+
+Phase 3 polish (still TODO):
+- icon **generator** (text + glyph + bg colour, canvas → upload)
+- delete profile / delete page in the UI
+- AC EVO importer (needs a sample of its control-config file — game not installed here)
+- `POST /api/preview` — push one icon to the deck live (autosave covers most of this)
 
 ### Phase 4 — native wrapper (optional)
 - PySide6 `QWebEngineView` + system tray, talking to the same API

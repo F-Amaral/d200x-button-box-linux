@@ -3,22 +3,396 @@
 <title>D200x Button Box</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 40rem; }
-  pre { background: #1113; padding: 1rem; border-radius: 6px; overflow: auto; }
-  h1 { font-size: 1.2rem; }
-</style>
-<h1>D200x Button Box &mdash; API is up</h1>
-<p>The web UI is phase 3. For now this page just confirms the control API works.</p>
-<pre id="state">loading /api/state &hellip;</pre>
-<pre id="events">/api/events &hellip;</pre>
-<script>
-  fetch('api/state').then(r => r.json())
-    .then(s => document.getElementById('state').textContent = JSON.stringify(s, null, 2))
-    .catch(e => document.getElementById('state').textContent = 'error: ' + e);
+  :root{
+    --bg:#0f1115; --panel:#171a20; --panel2:#1d2128; --line:#2c313b; --fg:#e7e9ec;
+    --mut:#8b93a0; --acc:#4a9eff; --ok:#3ad07a; --danger:#ff6b6b;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font:14px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg)}
+  button,input,select,textarea{font:inherit;color:var(--fg);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.4rem .55rem}
+  button{background:var(--panel2);cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+  button.ghost{background:transparent}
+  button.on{background:var(--acc);border-color:var(--acc);color:#04121f}
+  input[type=checkbox]{accent-color:var(--acc);width:1rem;height:1rem}
+  a{color:var(--acc)}
 
-  const log = document.getElementById('events');
-  log.textContent = '';
-  new EventSource('api/events').onmessage = e => {
-    log.textContent = (e.data + '\n' + log.textContent).split('\n').slice(0, 20).join('\n');
+  header{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;padding:.7rem 1rem;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+  header .sp{flex:1}
+  header .brand{font-weight:700;letter-spacing:.02em}
+  #dot{width:.65rem;height:.65rem;border-radius:50%;background:#555;flex:none}
+  #dot.on{background:var(--ok)}
+  #status{font-size:12px;color:var(--mut);min-width:5rem}
+  #tabs{display:flex;gap:.25rem;align-items:center}
+  #tabs button{padding:.25rem .55rem}
+
+  .wrap{margin:0 auto;padding:1.8rem 1rem;display:flex;gap:1.8rem;justify-content:center;align-items:flex-start;flex-wrap:wrap;min-height:calc(100vh - 120px)}
+
+  #deck{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;grid-template-columns:repeat(5,104px);gap:10px;flex:none}
+  .cell{position:relative;height:104px;border:1px solid var(--line);border-radius:12px;background:#12151a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;overflow:hidden;text-align:center;padding:6px;transition:border-color .1s}
+  .cell:hover{border-color:#3b4250}
+  .cell.wide{grid-column:span 2}
+  .cell.round{border-radius:50%}
+  .cell.knob{border-radius:50%;background:#1b1f26;border-style:dashed}
+  .cell.sel{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc) inset}
+  .cell.hit{animation:hit .45s ease-out}
+  @keyframes hit{0%{background:var(--acc)}100%{}}
+  .cell img{width:46px;height:46px;object-fit:contain;border-radius:4px}
+  .cell .lbl{font-weight:600;font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cell .v{font-size:10px;color:var(--acc);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cell .badge{position:absolute;top:5px;left:50%;transform:translateX(-50%);font-size:8px;letter-spacing:.05em;color:var(--bg);background:var(--acc);border-radius:4px;padding:0 4px;font-weight:700}
+  .cell.round .badge,.cell.knob .badge{top:8px}
+  .cell.empty .lbl{color:var(--mut);font-weight:400}
+
+  #editor{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:1.1rem 1.2rem;min-height:220px;flex:1 1 360px;max-width:480px;align-self:stretch}
+  #editor h2{margin:0 0 .3rem;font-size:1.05rem}
+  #editor .who{color:var(--mut);font-size:12px;margin-bottom:1rem}
+  .grp{border-top:1px solid var(--line);padding-top:.8rem;margin-top:.8rem}
+  .grp:first-of-type{border-top:0;padding-top:0;margin-top:0}
+  .grp h3{margin:0 0 .5rem;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+  .fld{display:grid;grid-template-columns:6rem 1fr;gap:.5rem;align-items:center;margin:.45rem 0}
+  .fld > label{color:var(--mut)}
+  .fld .hint{grid-column:2;font-size:11px;color:var(--mut);margin-top:-.2rem}
+  .fld input[type=text],.fld input[type=number],.fld select{width:100%}
+  .knobsub{border:1px solid var(--line);border-radius:10px;padding:.5rem .7rem;margin:.5rem 0}
+  .knobsub > b{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  .placeholder{color:var(--mut)}
+
+  dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:14px;max-width:30rem;width:calc(100vw - 2rem);padding:1.2rem}
+  dialog::backdrop{background:#000a}
+  dialog h3{margin:.1rem 0 1rem}
+  .dlg-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
+  .report{font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.6rem;max-height:12rem;overflow:auto;white-space:pre-wrap}
+</style>
+
+<header>
+  <span id="dot" title="daemon connection"></span>
+  <span class="brand">D200x</span>
+  <label style="display:flex;gap:.35rem;align-items:center;color:var(--mut);font-size:13px">profile
+    <select id="profileSel" title="active profile"></select>
+  </label>
+  <span id="tabs"></span>
+  <button id="addPage" class="ghost" title="add a page">+ page</button>
+  <span class="sp"></span>
+  <span id="status"></span>
+  <button id="importBtn" class="ghost">Import from game</button>
+  <button id="listenBtn" class="ghost">Listen</button>
+  <button id="settingsBtn" class="ghost">Settings</button>
+  <label style="display:flex;gap:.35rem;align-items:center;font-size:13px;color:var(--mut)">
+    <input type="checkbox" id="autosave"> autosave
+  </label>
+  <button id="saveBtn" class="primary">Save</button>
+</header>
+
+<div class="wrap">
+  <div id="deck"></div>
+  <aside id="editor"></aside>
+</div>
+
+<dialog id="settings">
+  <h3>Device settings</h3>
+  <div class="fld"><label>Brightness</label><span><input id="s_bri" type="range" min="0" max="100"> <span id="s_bri_v"></span></span></div>
+  <div class="fld"><label>Heartbeat</label><input id="s_hb" type="number" step="0.5" min="0.5"><div class="hint">write interval (s) that keeps the deck awake — don't set to 0</div></div>
+  <div class="fld"><label>Grab keyboard</label><input id="s_grab" type="checkbox"><div class="hint">swallow the deck's built-in keyboard macros</div></div>
+  <div class="fld"><label>Home key</label><select id="s_homekey"></select><div class="hint">jumps to the home profile from any profile</div></div>
+  <div class="fld"><label>Home →</label><select id="s_homeprof"></select></div>
+  <div class="fld"><label>Revert after</label><input id="s_revert" type="number" step="1" min="0"><div class="hint">idle seconds before returning to auto-detect (0 = stay)</div></div>
+  <p class="hint">API host / port / token: edit <code>settings.yaml</code>.</p>
+  <div class="dlg-actions"><button id="s_cancel" class="ghost">Cancel</button><button id="s_save" class="primary">Save</button></div>
+</dialog>
+
+<dialog id="importDlg">
+  <h3>Import labels from a game</h3>
+  <p class="hint">Reads the game's own control bindings and labels the deck buttons that
+  are bound to the <b>D200x Button Box</b> controller in-game.</p>
+  <div class="fld"><label>Game</label><select id="i_game"></select></div>
+  <div class="fld"><label>Path</label><input id="i_path" type="text" placeholder="game install folder"><div class="hint" id="i_pathhint"></div></div>
+  <div class="fld"><label>Overwrite</label><input id="i_over" type="checkbox" checked><div class="hint">replace labels you set by hand too</div></div>
+  <div id="i_report" class="report" hidden></div>
+  <div class="dlg-actions"><button id="i_cancel" class="ghost">Close</button><button id="i_run" class="primary">Import</button></div>
+</dialog>
+
+<script>
+const KEY_ROWS=[[0,1,2,3,4],[5,6,7,8,9],[10,11,12,13]];
+const AUX_L=15,AUX_R=16,STATUS=13,KNOBS=[17,18,19];
+const ACTIONS=["none","gamepad","key","command","profile","page"];
+const ACTION_HINT={gamepad:"virtual joystick button the game binds",key:"keystroke (ydotool/xdotool)",command:"shell command on the daemon host",profile:"switch profile — or auto / next / prev / home",page:"switch page in this profile"};
+
+let S={name:null,profile:null,page:0,sel:null,listening:false,profiles:[],settings:null,es:null,dirty:false,autosave:false,homeKey:null,saveT:null};
+
+const api=(p,o={})=>fetch("api/"+p,o).then(r=>{if(!r.ok)return r.text().then(t=>Promise.reject(t||r.status));const c=r.headers.get("content-type")||"";return c.includes("json")?r.json():r;});
+const $=s=>document.querySelector(s);
+const el=(t,p={},k=[])=>{const e=document.createElement(t);for(const[key,val]of Object.entries(p)){if(key==="class")e.className=val;else if(key==="html")e.innerHTML=val;else e[key]=val;}for(const c of[].concat(k))e.append(c);return e;};
+
+// ---- model -----------------------------------------------------------
+const pages=()=>S.profile.pages;
+const curPage=()=>pages()[S.page]||pages()[0];
+const keyB=i=>curPage().keys[i]||(curPage().keys[i]={});
+const knobB=(i,s)=>{const k=curPage().knobs[i]||(curPage().knobs[i]={});return k[s]||(k[s]={});};
+const actOf=b=>ACTIONS.find(a=>a!=="none"&&a in b)||"none";
+function setAct(b,act,val){for(const a of ACTIONS)if(a!=="none")delete b[a];if(act==="gamepad")b.gamepad=Number(val)||1;else if(act!=="none")b[act]=val??"";}
+const intKeys=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[Number(k),v||{}]));
+function normalize(name,raw){const mk=p=>({name:p.name||"",keys:intKeys(p.keys),knobs:intKeys(p.knobs)});const pg=raw.pages?raw.pages.map(mk):[mk(raw)];return{name,pages:pg.length?pg:[mk({})]};}
+function serialize(){const p=S.profile;const dump=g=>({...(g.name?{name:g.name}:{}),keys:g.keys,knobs:g.knobs});return(p.pages.length===1&&!p.pages[0].name)?dump(p.pages[0]):{pages:p.pages.map(dump)};}
+
+// ---- load / save ---------------------------------------------------
+async function boot(){
+  S.autosave=localStorage.getItem("d200x.autosave")==="1";
+  $("#autosave").checked=S.autosave;
+  const st=await api("state"); setConn(st.device.connected);
+  const pl=await api("profiles"); S.profiles=pl.profiles; S.name=pl.active;
+  S.settings=await api("settings"); S.homeKey=S.settings.home.key;
+  await loadProfile(S.name);
+  connectSSE();
+}
+async function loadProfile(name){
+  S.name=name; S.page=0; S.sel=null; S.dirty=false;
+  S.profile=normalize(name,await api("profiles/"+name));
+  render();
+}
+function touched(){ S.dirty=true; renderStatus(); if(S.autosave)scheduleSave(); }
+function scheduleSave(){ clearTimeout(S.saveT); S.saveT=setTimeout(save,450); }
+async function save(){
+  clearTimeout(S.saveT);
+  renderStatus("saving…");
+  try{ await api("profiles/"+S.name,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(serialize())}); S.dirty=false; renderStatus("saved"); }
+  catch(e){ renderStatus("save failed"); }
+}
+
+// ---- SSE ----------------------------------------------------------
+function setConn(on){ $("#dot").classList.toggle("on",on); }
+function connectSSE(){
+  S.es?.close();
+  S.es=new EventSource("api/events");
+  S.es.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==="state"){ setConn(true); }
+    if(m.type==="input") onInput(m);
+    if(m.type==="profile" && m.name!==S.name && !S.dirty){ S.name=m.name; syncProfileSel(); loadProfile(m.name); }
+    if(m.type==="page"){ /* device page; editor stays where the user is */ }
   };
+  S.es.onerror=()=>setConn(false);
+}
+function onInput(m){
+  const c=document.querySelector(`.cell[data-id="${m.index}"]`);
+  if(c){ c.classList.add("hit"); setTimeout(()=>c.classList.remove("hit"),450); }
+  if(S.listening && m.action!=="release"){
+    S.listening=false; $("#listenBtn").classList.remove("on"); $("#listenBtn").textContent="Listen";
+    selectControl(m.kind,m.index);
+  }
+}
+
+// ---- render -----------------------------------------------------
+function render(){ syncProfileSel(); renderTabs(); renderDeck(); renderEditor(); renderStatus(); }
+function renderStatus(txt){
+  const s=$("#status");
+  if(txt){ s.textContent=txt; return; }
+  s.textContent = S.autosave ? (S.dirty?"…":"saved") : (S.dirty?"● unsaved":"");
+  s.style.color = S.dirty && !S.autosave ? "var(--acc)" : "var(--mut)";
+  $("#saveBtn").style.display = S.autosave ? "none" : "";
+}
+function syncProfileSel(){
+  const ps=$("#profileSel"); ps.innerHTML="";
+  S.profiles.forEach(n=>ps.append(el("option",{value:n,textContent:n,selected:n===S.name})));
+}
+function renderTabs(){
+  const tb=$("#tabs"); tb.innerHTML="";
+  pages().forEach((pg,i)=>{
+    const b=el("button",{textContent:pg.name||("page "+(i+1))});
+    b.classList.toggle("on",i===S.page);
+    b.onclick=()=>{ S.page=i; S.sel=null; render(); api("page",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({page:i})}); };
+    tb.append(b);
+  });
+}
+function labelFor(id){ return id===STATUS?"status":id===AUX_L?"aux ◀":id===AUX_R?"aux ▶":"key "+id; }
+function iconURL(path){ const n=(path||"").split("/").pop(); return /^[0-9a-f]{16}\.png$/.test(n)?"api/icons/"+n:""; }
+function shortVal(b){ const a=actOf(b); if(a==="none")return""; if(a==="gamepad")return"btn "+b.gamepad+(b.momentary?" ·pulse":""); return a+": "+(b[a]??""); }
+
+function cellFor(id,cls){
+  const b=curPage().keys[id]||{};
+  const c=el("div",{class:"cell "+(cls||"")}); c.dataset.id=id;
+  if(!Object.keys(b).length && id!==STATUS) c.classList.add("empty");
+  if(S.sel&&S.sel.kind==="key"&&S.sel.index===id) c.classList.add("sel");
+  if(id===S.homeKey) c.append(el("span",{class:"badge",textContent:"HOME"}));
+  const u=iconURL(b.icon);
+  if(u) c.append(el("img",{src:u}));
+  c.append(el("div",{class:"lbl",textContent:b.label||labelFor(id),title:b.label||""}));
+  const v=shortVal(b); if(v) c.append(el("div",{class:"v",textContent:v,title:v}));
+  c.onclick=()=>selectControl("key",id);
+  return c;
+}
+function renderDeck(){
+  const d=$("#deck"); d.innerHTML="";
+  for(const row of KEY_ROWS) for(const id of row) d.append(cellFor(id,id===STATUS?"wide":""));
+  d.append(cellFor(AUX_L,"round"));
+  for(const k of KNOBS){
+    const c=el("div",{class:"cell knob"}); c.dataset.id=k;
+    if(S.sel&&S.sel.kind==="knob"&&S.sel.index===k) c.classList.add("sel");
+    if(k===S.homeKey) c.append(el("span",{class:"badge",textContent:"HOME"}));
+    c.append(el("div",{class:"lbl",textContent:"⟳ enc "+k}));
+    const kb=curPage().knobs[k]||{};
+    const parts=["left","right","press"].filter(s=>kb[s]&&actOf(kb[s])!=="none").map(s=>kb[s].label||(s+" "+shortVal(kb[s])));
+    if(parts.length) c.append(el("div",{class:"v",textContent:parts.join(" · "),title:parts.join(" · ")}));
+    c.onclick=()=>selectControl("knob",k);
+    d.append(c);
+  }
+  d.append(cellFor(AUX_R,"round"));
+}
+function selectControl(kind,index){ S.sel={kind,index}; renderDeck(); renderEditor(); }
+
+// action editor block, mutating `binding`
+function actionBlock(binding,onChange){
+  const wrap=el("div");
+  const sel=el("select");
+  ACTIONS.forEach(a=>sel.append(el("option",{value:a,textContent:a,selected:a===actOf(binding)})));
+  const valFld=el("div",{class:"fld"});
+  const rebuild=()=>{
+    valFld.innerHTML="";
+    const a=sel.value;
+    if(a==="none"){ return; }
+    let input;
+    if(a==="gamepad") input=el("input",{type:"number",min:1,value:binding.gamepad||1});
+    else if(a==="profile"){ input=el("select"); [...S.profiles,"auto","next","prev","home"].forEach(o=>input.append(el("option",{value:o,textContent:o,selected:o===binding.profile}))); }
+    else if(a==="page"){ input=el("select"); ["next","prev","0","1","2","3","4"].forEach(o=>input.append(el("option",{value:o,textContent:o,selected:String(binding.page)===o}))); }
+    else input=el("input",{type:"text",value:binding[a]||"",placeholder:a==="key"?"F13":"e.g. sh -c 'crew-chief …'"});
+    input.oninput=input.onchange=()=>{ setAct(binding,a,input.value); onChange(); };
+    valFld.append(el("label",{textContent:"value"}),input);
+    if(a==="gamepad"){
+      const m=el("input",{type:"checkbox",checked:!!binding.momentary});
+      m.onchange=()=>{ binding.momentary=m.checked||undefined; onChange(); };
+      const row=el("label",{style:"display:flex;gap:.4rem;align-items:center"},[m,"pulse (tap, not hold)"]);
+      valFld.append(el("span"),row);
+    }
+    if(ACTION_HINT[a]) valFld.append(el("div",{class:"hint",textContent:ACTION_HINT[a]}));
+  };
+  sel.onchange=()=>{ setAct(binding,sel.value,sel.value==="gamepad"?1:""); rebuild(); onChange(); };
+  rebuild();
+  wrap.append(el("div",{class:"fld"},[el("label",{textContent:"action"}),sel]),valFld);
+  return wrap;
+}
+
+function renderEditor(){
+  const e=$("#editor"); e.innerHTML="";
+  if(!S.sel){ e.append(el("p",{class:"placeholder",textContent:"Pick a control on the deck — or hit Listen and press one on the D200x."})); return; }
+  const {kind,index}=S.sel;
+  e.append(el("h2",{textContent:(kind==="knob"?"Encoder ":"Key ")+index}));
+  e.append(el("div",{class:"who",textContent:kind==="knob"?"rotary encoder — turn left / right / click":(index===STATUS?"wide status key (also shows the clock)":index===AUX_L||index===AUX_R?"round aux button — no screen":"LCD key")}));
+
+  if(kind==="key"){
+    const b=keyB(index);
+    const g1=el("div",{class:"grp"},[el("h3",{textContent:"Action"})]);
+    g1.append(actionBlock(b,()=>{renderDeck();touched();}));
+    e.append(g1);
+
+    const g2=el("div",{class:"grp"},[el("h3",{textContent:"Appearance"})]);
+    const lab=el("input",{type:"text",value:b.label||"",placeholder:"shown on the key"});
+    lab.oninput=()=>{ b.label=lab.value||undefined; renderDeck(); touched(); };
+    g2.append(el("div",{class:"fld"},[el("label",{textContent:"label"}),lab]));
+
+    const iconWrap=el("div",{class:"fld"});
+    iconWrap.append(el("label",{textContent:"icon"}));
+    const iconCtl=el("div",{style:"display:flex;gap:.5rem;align-items:center;flex-wrap:wrap"});
+    const u=iconURL(b.icon);
+    if(u) iconCtl.append(el("img",{src:u,style:"width:40px;height:40px;object-fit:contain;border:1px solid var(--line);border-radius:6px"}));
+    const file=el("input",{type:"file",accept:"image/*"});
+    file.onchange=async()=>{
+      if(!file.files[0])return;
+      const buf=await file.files[0].arrayBuffer();
+      const r=await api("icons",{method:"POST",headers:{"content-type":"image/png"},body:buf});
+      b.icon=r.path; renderEditor(); renderDeck(); touched();
+    };
+    iconCtl.append(file);
+    if(b.icon){ const clr=el("button",{class:"ghost",textContent:"remove"}); clr.onclick=()=>{ delete b.icon; renderEditor(); renderDeck(); touched(); }; iconCtl.append(clr); }
+    iconWrap.append(iconCtl);
+    g2.append(iconWrap);
+    if(index===AUX_L||index===AUX_R) g2.append(el("div",{class:"fld"},[el("span"),el("div",{class:"hint",textContent:"this button has no screen; label & icon are ignored on the device"})]));
+    e.append(g2);
+  }else{
+    for(const sub of ["left","right","press"]){
+      const box=el("div",{class:"knobsub"},[el("b",{textContent:sub==="press"?"click":"turn "+sub})]);
+      const kb=knobB(index,sub);
+      box.append(actionBlock(kb,()=>{renderDeck();touched();}));
+      const lab=el("input",{type:"text",value:kb.label||"",placeholder:"note (editor only)"});
+      lab.oninput=()=>{ kb.label=lab.value||undefined; renderDeck(); touched(); };
+      box.append(el("div",{class:"fld"},[el("label",{textContent:"note"}),lab]));
+      e.append(box);
+    }
+    e.append(el("p",{class:"hint",textContent:"Encoder click fires on release (firmware) — always a short pulse."}));
+  }
+
+  const clr=el("button",{class:"ghost",textContent:"clear this control",style:"margin-top:1rem"});
+  clr.onclick=()=>{ if(kind==="key")delete curPage().keys[index]; else delete curPage().knobs[index]; S.sel=null; render(); touched(); };
+  e.append(clr);
+}
+
+// ---- settings dialog -----------------------------------------
+function openSettings(){
+  const s=S.settings;
+  $("#s_bri").value=s.device.brightness??80; $("#s_bri_v").textContent=$("#s_bri").value;
+  $("#s_hb").value=s.device.heartbeat_seconds;
+  $("#s_grab").checked=s.device.grab_keyboard;
+  $("#s_revert").value=s.home.revert_seconds;
+  const hk=$("#s_homekey"); hk.innerHTML=""; hk.append(el("option",{value:"",textContent:"(off)"}));
+  [...KEY_ROWS.flat(),AUX_L,AUX_R,...KNOBS].forEach(i=>hk.append(el("option",{value:i,textContent:labelFor(i)+" ("+i+")",selected:String(s.home.key)===String(i)})));
+  const hp=$("#s_homeprof"); hp.innerHTML=""; S.profiles.forEach(n=>hp.append(el("option",{value:n,textContent:n,selected:n===s.home.profile})));
+  $("#settings").showModal();
+}
+$("#s_bri").oninput=()=>$("#s_bri_v").textContent=$("#s_bri").value;
+$("#s_cancel").onclick=()=>$("#settings").close();
+$("#s_save").onclick=async()=>{
+  const s=S.settings;
+  s.device.brightness=Number($("#s_bri").value);
+  s.device.heartbeat_seconds=Number($("#s_hb").value);
+  s.device.grab_keyboard=$("#s_grab").checked;
+  s.home.key=$("#s_homekey").value===""?null:Number($("#s_homekey").value);
+  s.home.profile=$("#s_homeprof").value;
+  s.home.revert_seconds=Number($("#s_revert").value);
+  await api("settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(s)});
+  S.homeKey=s.home.key; $("#settings").close(); renderDeck();
+};
+
+// ---- import dialog -------------------------------------------
+let GAMES={};
+async function openImport(){
+  GAMES=await api("games").catch(()=>({}));
+  const g=$("#i_game"); g.innerHTML="";
+  Object.keys(GAMES).forEach(k=>g.append(el("option",{value:k,textContent:k.toUpperCase(),selected:true})));
+  $("#i_report").hidden=true;
+  syncImportPath();
+  $("#importDlg").showModal();
+}
+function syncImportPath(){
+  const k=$("#i_game").value, info=GAMES[k]||{};
+  $("#i_path").value=info.path||"";
+  $("#i_pathhint").textContent=info.path?"auto-detected":"not found — enter the game's install folder";
+}
+$("#i_game").onchange=syncImportPath;
+$("#i_cancel").onclick=()=>$("#importDlg").close();
+$("#i_run").onclick=async()=>{
+  const body={game:$("#i_game").value,path:$("#i_path").value||undefined,overwrite:$("#i_over").checked};
+  try{
+    const rep=await api("profiles/"+S.name+"/import",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+    const lines=[];
+    lines.push(`labelled ${Object.keys(rep.applied).length} button(s)`);
+    if(Object.keys(rep.skipped).length) lines.push(`\nkept your labels on: ${Object.entries(rep.skipped).map(([n,v])=>`btn ${n} (${v})`).join(", ")}`);
+    if(Object.keys(rep.unmatched).length) lines.push(`\nbound in-game but not on any control:\n`+Object.entries(rep.unmatched).map(([n,v])=>`  btn ${n} = ${v}`).join("\n"));
+    $("#i_report").textContent=lines.join("\n"); $("#i_report").hidden=false;
+    await loadProfile(S.name);
+  }catch(e){ $("#i_report").textContent="import failed: "+e; $("#i_report").hidden=false; }
+};
+
+// ---- header wiring -------------------------------------------
+$("#saveBtn").onclick=save;
+$("#settingsBtn").onclick=openSettings;
+$("#importBtn").onclick=openImport;
+$("#listenBtn").onclick=()=>{ S.listening=!S.listening; $("#listenBtn").classList.toggle("on",S.listening); $("#listenBtn").textContent=S.listening?"Listening…":"Listen"; };
+$("#autosave").onchange=e=>{ S.autosave=e.target.checked; localStorage.setItem("d200x.autosave",S.autosave?"1":"0"); if(S.autosave&&S.dirty)save(); renderStatus(); };
+$("#profileSel").onchange=async e=>{ await api("activate",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({profile:e.target.value})}); await loadProfile(e.target.value); };
+$("#addPage").onclick=()=>{ pages().push({name:"",keys:{},knobs:{}}); S.page=pages().length-1; render(); touched(); };
+
+window.onbeforeunload=e=>{ if(S.dirty&&!S.autosave){ e.preventDefault(); e.returnValue=""; } };
+boot().catch(e=>{ console.error(e); $("#editor").innerHTML='<p class="placeholder">Cannot reach the daemon API. Is <code>d200x-buttonboxd</code> running?</p>'; });
 </script>

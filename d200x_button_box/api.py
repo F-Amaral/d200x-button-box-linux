@@ -66,6 +66,27 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
 
 
+def _save_icon(data: bytes) -> dict:
+    """Normalise an uploaded image to a 196x196 PNG under CONFIG_DIR/icons/."""
+    import hashlib
+    import io
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = img.convert("RGBA")
+        if img.size != (196, 196):
+            img = img.resize((196, 196), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+    png = buf.getvalue()
+    name = hashlib.sha1(png).hexdigest()[:16] + ".png"
+    dest = config.CONFIG_DIR / "icons" / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(png)
+    return {"path": str(dest), "url": f"/api/icons/{name}"}
+
+
 class Handler(BaseHTTPRequestHandler):
     daemon = None
     token = None
@@ -134,9 +155,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_body(self) -> dict:
-        n = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(n) if n else b""
+        raw = self._read_raw_body()
         return json.loads(raw) if raw else {}
+
+    def _read_raw_body(self) -> bytes:
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        return self.rfile.read(n) if n else b""
+
+    def _raw(self, data: bytes, ctype: str):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(data)
 
     # -- API ----------------------------------------------------------
     def _api(self, method: str, path: str):
@@ -154,8 +186,35 @@ class Handler(BaseHTTPRequestHandler):
                 d.request_reload()
                 return self._json({"ok": True})
 
+        if seg == ["games"] and method == "GET":
+            from . import gameimport
+
+            found = gameimport.available_games()
+            merged = {g: {"path": d.settings.games.get(g) or info["path"]}
+                      for g, info in found.items()}
+            for g, p in d.settings.games.items():
+                merged.setdefault(g, {"path": p})
+            return self._json(merged)
+
         if seg == ["profiles"] and method == "GET":
             return self._json({"profiles": config.list_profiles(), "active": d.store.active_name})
+
+        if len(seg) == 3 and seg[0] == "profiles" and seg[2] == "import" and method == "POST":
+            from . import gameimport
+
+            name, body = seg[1], self._read_body()
+            game = body.get("game", "lmu")
+            path = body.get("path") or d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
+            if not path:
+                return self._json({"error": f"no install path for {game}"}, 400)
+            if name not in config.list_profiles():
+                raise FileNotFoundError(name)
+            prof = config.load_profile(name)
+            report = gameimport.apply_labels(
+                prof, gameimport.import_game(game, path), overwrite=body.get("overwrite", True))
+            config.save_profile(prof)
+            d.request_reload()
+            return self._json(report)
 
         if len(seg) == 2 and seg[0] == "profiles":
             name = seg[1]
@@ -173,6 +232,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "created": True})
             if method == "DELETE":
                 return self._json({"ok": config.delete_profile(name)})
+
+        if seg == ["icons"] and method == "POST":
+            return self._json(_save_icon(self._read_raw_body()))
+        if len(seg) == 2 and seg[0] == "icons" and method == "GET":
+            f = (config.CONFIG_DIR / "icons" / seg[1]).resolve()
+            if (config.CONFIG_DIR / "icons").resolve() in f.parents and f.is_file():
+                return self._raw(f.read_bytes(), "image/png")
+            raise FileNotFoundError(seg[1])
 
         if seg == ["activate"] and method == "POST":
             d.request_profile(str(self._read_body().get("profile") or "auto"))

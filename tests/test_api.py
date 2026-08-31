@@ -114,6 +114,30 @@ def test_profiles_crud(client):
     assert status == 404
 
 
+def test_games_endpoint(client):
+    call, _ = client
+    status, games = call("GET", "/api/games")
+    assert status == 200 and "lmu" in games and "path" in games["lmu"]
+
+
+def test_import_endpoint(client, tmp_path):
+    import json as _json
+
+    call, daemon = client
+    lmu = tmp_path / "lmu"
+    (lmu / "UserData" / "player").mkdir(parents=True)
+    (lmu / "UserData" / "player" / "direct input.json").write_text(_json.dumps({
+        "Devices": {"D200x Button Box-A": {}},
+        "Input": {"Headlights": {"device": "D200x Button Box-A", "id": 32}},
+    }))
+    # default profile has key 0 -> gamepad 1
+    status, rep = call("POST", "/api/profiles/default/import", {"game": "lmu", "path": str(lmu)})
+    assert status == 200
+    assert rep["applied"] == {"1": "Headlights"}
+    assert config.load_profile("default").page(0).keys[0]["label"] == "Headlights"
+    assert ("reload",) in daemon.calls
+
+
 def test_activate_and_page(client):
     call, daemon = client
     call("POST", "/api/activate", {"profile": "lmu"})
@@ -126,6 +150,28 @@ def test_static_index(client):
     call, _ = client
     status, body = call("GET", "/", raw=True)
     assert status == 200 and b"D200x" in body
+
+
+def test_icon_upload_and_fetch(client, tmp_path):
+    import io
+
+    from PIL import Image
+
+    call, _ = client
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 48), "green").save(buf, format="PNG")
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{call.port}/api/icons", data=buf.getvalue(),
+        method="POST", headers={"Content-Type": "image/png"},
+    )
+    with urllib.request.urlopen(req, timeout=3) as r:
+        res = json.loads(r.read())
+    assert res["url"].startswith("/api/icons/") and res["path"].endswith(".png")
+
+    status, png = call("GET", res["url"], raw=True)
+    assert status == 200
+    assert Image.open(io.BytesIO(png)).size == (196, 196)
 
 
 def test_sse_sends_initial_state(client):

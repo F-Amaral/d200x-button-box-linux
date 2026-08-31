@@ -16,9 +16,29 @@ def _setup_log(level: str) -> None:
     )
 
 
+_lock_handle = None
+
+
+def _acquire_lock() -> bool:
+    """Single-instance guard: one daemon per machine (it owns the one deck)."""
+    import fcntl
+
+    global _lock_handle
+    path = config.CONFIG_DIR / "daemon.lock"
+    _lock_handle = open(path, "w")
+    try:
+        fcntl.flock(_lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
 def cmd_run(args) -> int:
     _setup_log(args.log_level)
     config.bootstrap()
+    if not _acquire_lock():
+        print("another d200x-buttonboxd is already running", file=sys.stderr)
+        return 1
     from .daemon import Daemon
 
     store = config.ConfigStore()

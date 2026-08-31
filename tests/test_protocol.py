@@ -99,16 +99,32 @@ def test_settings_roundtrip(tmp_path):
     assert back.auto_detect == {"lmu": ["LeMansUltimate"]} and back.api.port == 9999
 
 
-def test_default_profile_covers_every_control_uniquely():
+def test_default_profile_stable_numbering():
     page = config.default_profile("x").page(0)
     assert set(page.keys) == set(config.KEY_INDICES)
     assert set(page.knobs) == set(config.KNOB_INDICES)
     assert page.keys[config.HOME_KEY_INDEX] == {"profile": "home"}   # leftmost aux
     assert page.keys[16] == {"page": "next"}                          # rightmost aux
+    # stable map: LCD key i -> button i+1, status -> 14, encoders -> 17..25
+    assert page.keys[0]["gamepad"] == 1 and page.keys[12]["gamepad"] == 13
+    assert page.keys[13]["gamepad"] == 14
+    assert page.knobs[17] == {"left": {"gamepad": 17}, "right": {"gamepad": 18}, "press": {"gamepad": 19}}
+    assert page.knobs[19]["right"]["gamepad"] == 24
     nums = [b["gamepad"] for b in page.keys.values() if "gamepad" in b]
     for k in page.knobs.values():
         nums += [k["left"]["gamepad"], k["right"]["gamepad"], k["press"]["gamepad"]]
     assert len(nums) == len(set(nums))
+
+
+def test_config_dir_env_override(tmp_path):
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c", "from d200x_button_box import config; print(config.SETTINGS_PATH)"],
+        capture_output=True, text=True, env={"D200X_CONFIG_DIR": str(tmp_path / "cfg"), "PATH": ""},
+    ).stdout.strip()
+    assert out == str(tmp_path / "cfg" / "settings.yaml")
 
 
 def test_profile_save_load_single_and_multi_page(tmp_path, monkeypatch):

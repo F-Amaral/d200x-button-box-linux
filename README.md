@@ -26,10 +26,14 @@ echo uinput | sudo tee /etc/modules-load.d/uinput.conf && sudo modprobe uinput
 # then physically unplug/replug the deck
 
 d200x-button-box init      # ~/.config/d200x-button-box/
-d200x-buttonboxd           # run the daemon
+d200x-buttonboxd           # run the daemon (+ config UI on http://localhost:8377)
 ```
 
-Bind the **D200x Button Box** controller in your game's control settings.
+Bind the **D200x Button Box** controller in your game's control settings, and
+open `http://localhost:8377` to edit bindings, labels, icons and profiles (set
+`api.host: 0.0.0.0` + a token in `settings.yaml` to reach it from a phone).
+Already bound things in Le Mans Ultimate? "Import from game" pulls the control
+names back onto the deck so you can see what each button does.
 
 ## Docs
 

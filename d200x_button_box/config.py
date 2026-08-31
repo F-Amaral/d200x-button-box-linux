@@ -11,6 +11,7 @@ plus optional ``label`` and ``icon`` (path to an image) for the LCD key.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,7 +19,8 @@ import yaml
 
 from . import protocol
 
-CONFIG_DIR = Path.home() / ".config" / "d200x-button-box"
+# D200X_CONFIG_DIR overrides the location (handy for tests / throwaway configs).
+CONFIG_DIR = Path(os.environ.get("D200X_CONFIG_DIR") or (Path.home() / ".config" / "d200x-button-box"))
 SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
 PROFILES_DIR = CONFIG_DIR / "profiles"
 
@@ -55,6 +57,7 @@ class Settings:
     pulse_ms: int = 60
     active_profile: str = "default"
     auto_detect: dict[str, list[str]] = field(default_factory=dict)
+    games: dict[str, str] = field(default_factory=dict)  # game -> install path (for label import)
     home: HomeConfig = field(default_factory=HomeConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
 
@@ -80,6 +83,7 @@ class Settings:
             pulse_ms=int(raw.get("pulse_ms", cls.pulse_ms)),
             active_profile=raw.get("active_profile", cls.active_profile),
             auto_detect={k: list(v) for k, v in (raw.get("auto_detect") or {}).items()},
+            games={k: str(v) for k, v in (raw.get("games") or {}).items()},
             home=HomeConfig(
                 key=home.get("key"),
                 profile=home.get("profile", "launcher"),
@@ -103,6 +107,7 @@ class Settings:
             "pulse_ms": self.pulse_ms,
             "active_profile": self.active_profile,
             "auto_detect": self.auto_detect,
+            "games": self.games,
             "home": {
                 "key": self.home.key,
                 "profile": self.home.profile,
@@ -220,30 +225,35 @@ HOME_KEY_INDEX = protocol.PAGE_KEY_INDICES[0]  # leftmost aux button (no screen)
 
 
 def default_profile(name: str = "default") -> Profile:
-    """One page, every control mapped to a sequential gamepad button.
+    """One page, with a STABLE control -> gamepad-button map so restructuring
+    never shifts existing in-game bindings:
 
-    The leftmost aux button is left for the global home function (settings.home);
-    the right one cycles pages.
+        LCD key i (0..12)  -> button i + 1        (1..13)
+        wide status key    -> button 14
+        aux L / aux R      -> home / page  (buttons 15, 16 reserved, unused)
+        encoder 17 L/R/click -> buttons 17, 18, 19
+        encoder 18           -> 20, 21, 22
+        encoder 19           -> 23, 24, 25
+
+    The leftmost aux button is the global home key (settings.home); the right
+    one cycles pages.
     """
     page = Page()
-    btn = 1
     for i in KEY_INDICES:
         if i == HOME_KEY_INDEX:
             page.keys[i] = {"profile": "home"}
-            continue
-        if i == protocol.PAGE_KEY_INDICES[1]:
+        elif i == protocol.PAGE_KEY_INDICES[1]:
             page.keys[i] = {"page": "next"}
-            continue
-        label = "STATUS" if i == protocol.STATUS_KEY_INDEX else f"BTN {btn}"
-        page.keys[i] = {"gamepad": btn, "label": label}
-        btn += 1
-    for i in KNOB_INDICES:
+        else:
+            label = "STATUS" if i == protocol.STATUS_KEY_INDEX else f"BTN {i + 1}"
+            page.keys[i] = {"gamepad": i + 1, "label": label}
+    for pos, i in enumerate(KNOB_INDICES):
+        base = 17 + pos * 3
         page.knobs[i] = {
-            "left": {"gamepad": btn},
-            "right": {"gamepad": btn + 1},
-            "press": {"gamepad": btn + 2},
+            "left": {"gamepad": base},
+            "right": {"gamepad": base + 1},
+            "press": {"gamepad": base + 2},
         }
-        btn += 3
     return Profile(name=name, pages=[page])
 
 
@@ -350,6 +360,13 @@ def bootstrap() -> None:
         s.active_profile = "launcher"
         s.auto_detect = {"lmu": ["LeMansUltimate"], "ac_evo": ["AssettoCorsaEVO", "acevo"]}
         s.home = HomeConfig(key=HOME_KEY_INDEX, profile="launcher", revert_seconds=5)
+        try:
+            from .gameimport import find_lmu
+
+            if (lmu := find_lmu()):
+                s.games["lmu"] = lmu
+        except Exception:  # noqa: BLE001
+            pass
         s.save()
     if not list_profiles():
         for name in BUILTIN_PROFILE_ORDER:
