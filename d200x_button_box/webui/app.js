@@ -328,6 +328,10 @@ function cellFor(id, cls) {
   const sMode = id === STATUS ? (b.status || (b.clock === false ? "load" : "clock")) : null;
   if (id === STATUS && sMode !== "off") {
     c.append(el("div", { class: "lbl", textContent: sMode === "load" ? "▤ system load" : "🕐 clock" }));
+  } else if (id === STATUS) {
+    let u = previewURL(b);
+    if (u) { u += "&w=458&h=196"; const im = iconImg(u); im.className = "statwide"; c.append(im); }
+    else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id) }));
   } else {
     const u = previewURL(b);
     if (u) c.append(iconImg(u));

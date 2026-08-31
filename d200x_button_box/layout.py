@@ -98,7 +98,7 @@ def _glyph_font(size: int):
     return ImageFont.truetype(str(glyphs.FONT_PATH), size)
 
 
-def _draw_caption(d, text: str, font_name: str, colour) -> None:
+def _draw_caption(d, text: str, font_name: str, colour, cw: int = ICON_SIZE, ch: int = ICON_SIZE) -> None:
     """A small single line of text in the lower whitespace (glyph + name).
 
     Leading/trailing decoration is dropped -- labels like ``-> LMU`` / ``→ Pit``
@@ -107,7 +107,7 @@ def _draw_caption(d, text: str, font_name: str, colour) -> None:
     text = re.sub(r"^[\s\W_]+|[\s\W_]+$", "", " ".join((text or "").split()))
     if not text:
         return
-    S, max_w = ICON_SIZE, ICON_SIZE - 18
+    max_w = cw - 18
     font = _text_font(font_name, 30)
     if d.textlength(text, font=font) > max_w:
         while len(text) > 1 and d.textlength(text + "…", font=font) > max_w:
@@ -115,65 +115,67 @@ def _draw_caption(d, text: str, font_name: str, colour) -> None:
         text += "…"
     w = d.textlength(text, font=font)
     asc, desc = font.getmetrics()
-    d.text(((S - w) / 2, S - 20 - asc - desc), text, font=font, fill=colour)
+    d.text(((cw - w) / 2, ch - 20 - asc - desc), text, font=font, fill=colour)
 
 
 def render_icon(style: dict | None, text: str = "", glyph: str | None = None,
-                caption: str = "") -> bytes:
-    """196x196 RGBA PNG.
+                caption: str = "", size: tuple[int, int] | None = None) -> bytes:
+    """RGBA PNG, ``size`` (w, h) or 196x196.
 
     - a real ISO tell-tale (no frame -- the symbol IS the icon), OR
     - a Material glyph / text initials on a circle / rounded-square frame.
 
     ``caption`` is a short label drawn small along the bottom, under a glyph or
     tell-tale, so e.g. a profile-switch key shows both the icon and the target
-    name. Ignored when the icon is itself text (initials).
+    name. Ignored when the icon is itself text (initials). A non-square ``size``
+    (the wide status key) always uses the rounded-square frame.
     """
     Image, ImageDraw, _ = _pil()
     s = merge_style(style)
-    S = ICON_SIZE
+    W, H = size or (ICON_SIZE, ICON_SIZE)
+    m = min(W, H)
     cap = " ".join((caption or "").split())
 
     if glyph and telltales.has(glyph):
         scale = 0.66 if cap else 0.86
-        base = telltales.tint(glyph, s["fg"], int(S * scale))
-        if not cap:
-            return _pad_png(base, S)
-        img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        base = telltales.tint(glyph, s["fg"], int(m * scale))
+        if not cap and (W, H) == (ICON_SIZE, ICON_SIZE):
+            return _pad_png(base, m)
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         with Image.open(io.BytesIO(base)) as sym:
             sym = sym.convert("RGBA")
-            img.alpha_composite(sym, ((S - sym.size[0]) // 2, 4))
-        d = ImageDraw.Draw(img)
-        _draw_caption(d, cap, s["font"], s["fg"])
+            img.alpha_composite(sym, ((W - sym.size[0]) // 2, 4 if cap else (H - sym.size[1]) // 2))
+        if cap:
+            _draw_caption(ImageDraw.Draw(img), cap, s["font"], s["fg"], W, H)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
 
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     pad, bw, rad = 8, 12, 34
-    box = (pad, pad, S - pad - 1, S - pad - 1)
+    box = (pad, pad, W - pad - 1, H - pad - 1)
     fill = None if s["mode"] == "ring" else s["fill"]
-    if s["shape"] == "round":
+    if s["shape"] == "round" or W != H:
         d.rounded_rectangle(box, rad, fill=fill, outline=s["border"], width=bw)
     else:
         d.ellipse(box, fill=fill, outline=s["border"], width=bw)
 
     if glyph and (cp := glyphs.codepoint(glyph)) is not None:
-        font = _glyph_font(88 if cap else 112)
+        font = _glyph_font(round(m * (0.45 if cap else 0.57)))
         ch = chr(cp)
         tb = d.textbbox((0, 0), ch, font=font)
-        dy = -24 if cap else 0
-        d.text(((S - (tb[2] - tb[0])) / 2 - tb[0], (S - (tb[3] - tb[1])) / 2 - tb[1] + dy),
+        dy = -round(m * 0.12) if cap else 0
+        d.text(((W - (tb[2] - tb[0])) / 2 - tb[0], (H - (tb[3] - tb[1])) / 2 - tb[1] + dy),
                ch, font=font, fill=s["fg"])
         if cap:
-            _draw_caption(d, cap, s["font"], s["fg"])
+            _draw_caption(d, cap, s["font"], s["fg"], W, H)
     else:
         t = icon_initials(text)
         if t:
-            font = _text_font(s["font"], {1: 122, 2: 94, 3: 72}.get(len(t), 58))
+            font = _text_font(s["font"], round(m * {1: 0.62, 2: 0.48, 3: 0.37}.get(len(t), 0.3)))
             tb = d.textbbox((0, 0), t, font=font)
-            d.text(((S - (tb[2] - tb[0])) / 2 - tb[0], (S - (tb[3] - tb[1])) / 2 - tb[1]),
+            d.text(((W - (tb[2] - tb[0])) / 2 - tb[0], (H - (tb[3] - tb[1])) / 2 - tb[1]),
                    t, font=font, fill=s["fg"])
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -197,18 +199,14 @@ def _pad_png(png: bytes, w: int, h: int | None = None) -> bytes:
 STATUS_W, STATUS_H = 458, 196
 
 
-def _status_icon(png: bytes) -> bytes:
-    return _pad_png(png, STATUS_W, STATUS_H)
-
-
-
-def _load_icon_png(path: str) -> bytes | None:
+def _load_icon_png(path: str, size: tuple[int, int] | None = None) -> bytes | None:
     Image = _pil()[0]
+    dims = size or (ICON_SIZE, ICON_SIZE)
     try:
         with Image.open(path) as img:
             img = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
-            if img.size != (ICON_SIZE, ICON_SIZE):
-                img = img.resize((ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS)
+            if img.size != dims:
+                img = img.resize(dims, Image.Resampling.LANCZOS)
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             return buf.getvalue()
@@ -232,10 +230,11 @@ def is_box_binding(binding: dict) -> bool:
 
 
 def resolve_key_icon(binding: dict, page_style: dict | None,
-                     game_base: dict, nav_base: dict) -> bytes | None:
+                     game_base: dict, nav_base: dict,
+                     size: tuple[int, int] | None = None) -> bytes | None:
     binding = binding or {}
     if binding.get("icon"):
-        png = _load_icon_png(binding["icon"])
+        png = _load_icon_png(binding["icon"], size)
         if png:
             return png
 
@@ -261,7 +260,7 @@ def resolve_key_icon(binding: dict, page_style: dict | None,
     if not glyph and not text:
         return None
     try:
-        return render_icon(style, text=text, glyph=glyph, caption=caption)
+        return render_icon(style, text=text, glyph=glyph, caption=caption, size=size)
     except Exception as e:  # noqa: BLE001 - a font/Pillow hiccup must not break the push
         log.warning("icon render failed (%s / %s): %s", glyph, text, e)
         return None
@@ -317,9 +316,10 @@ def build_set_buttons(page=None, icon_cfg: dict | None = None) -> bytes:
             if index == protocol.STATUS_KEY_INDEX:
                 # clock / load -> the firmware fills the strip; off -> its own wide icon
                 if smode == "off":
-                    png = resolve_key_icon(status, page.style, game_base, nav_base)
+                    png = resolve_key_icon(status, page.style, game_base, nav_base,
+                                           size=(STATUS_W, STATUS_H))
                     if png:
-                        icons[index] = _status_icon(png)
+                        icons[index] = png
                 continue
             png = resolve_key_icon(page.keys.get(index, {}), page.style, game_base, nav_base)
             if png:

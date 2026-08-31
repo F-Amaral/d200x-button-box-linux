@@ -297,8 +297,11 @@ class Handler(BaseHTTPRequestHandler):
             q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
             style = {k: q[k] for k in layout.STYLE_KEYS if k in q}
             glyph = q.get("glyph") or (glyphs.label_glyph(q["label"]) if q.get("label") else None)
+            size = None
+            if q.get("w") and q.get("h"):
+                size = (int(q["w"]), int(q["h"]))
             return self._raw(layout.render_icon(
-                style, q.get("text") or q.get("label", ""), glyph, q.get("caption", "")), "image/png")
+                style, q.get("text") or q.get("label", ""), glyph, q.get("caption", ""), size), "image/png")
 
         if seg == ["glyphs"] and method == "GET":
             from . import compose, glyphs, telltales

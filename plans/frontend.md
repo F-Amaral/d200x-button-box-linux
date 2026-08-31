@@ -307,6 +307,9 @@ sim/box registers, autosave + status pill, `<img>` cache. Dialogs unchanged.
   found by reading `jcalado/companion-surface-d200` +
   `Tyaaa-aa/Ulanzi-Deck-Linux`; see `docs/hardware.md`. Deck + editor names are
   1-based ("Key 6", "Aux left", "Encoder 1") via `keyName` / `labelFor`.
+  `render_icon` now takes a `size` (w, h) — the status "off" icon is rendered
+  at the true 458×196 so the Material frame fills the whole wide key, not a
+  196px square floating in it. (Confirmed working on the device.)
 - more follow-ups ✅ — page/default-look pills moved *below* the deck (deck now
   top-aligns with the side panels); a **Navigation** section in the rail (and the
   Profiles drawer on mobile) sets the home / prev-page / next-page buttons —

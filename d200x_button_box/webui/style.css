@@ -209,6 +209,7 @@ header .spacer { flex: 1; }
 @keyframes hit { 0% { background: var(--accent); } 100% {} }
 
 .cell img { width: 48px; height: 48px; object-fit: contain; border-radius: 4px; }
+.cell img.statwide { width: 90%; height: auto; max-height: 70%; }
 .cell .lbl {
   font-weight: 600; font-size: var(--fs-xs);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
