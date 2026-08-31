@@ -32,8 +32,12 @@ class FakeDev:
     def set_brightness(self, p):
         pass
 
-    def heartbeat(self):
-        pass
+    def heartbeat(self, mode="clock", load=(0, 0, 0)):
+        self.beats = getattr(self, "beats", [])
+        self.beats.append(mode)
+
+    def small_window_background(self):
+        self.bg = getattr(self, "bg", 0) + 1
 
     def poll(self):
         return iter(())
@@ -153,7 +157,7 @@ def test_home_key_switches_and_reverts(tmp_path, monkeypatch):
         config.save_profile(config.default_profile(n))
 
     s = config.Settings(pulse_ms=10)
-    s.home = config.HomeConfig(key=13, profile="launcher", revert_seconds=0.05)
+    s.home = config.HomeConfig(profile="launcher", revert_seconds=0.05); s.nav = config.NavConfig(binds={13: {"tap": "home"}})
     d, _ = _daemon(settings=s)
     d.dev = FakeDev()
 
@@ -172,7 +176,7 @@ def test_home_key_switches_and_reverts(tmp_path, monkeypatch):
 
 def test_explicit_binding_wins_over_home_key():
     s = config.Settings(pulse_ms=10)
-    s.home = config.HomeConfig(key=13, profile="x", revert_seconds=0)
+    s.home = config.HomeConfig(profile="x", revert_seconds=0); s.nav = config.NavConfig(binds={13: {"tap": "home"}})
     d, pad = _daemon(keys={13: {"gamepad": 5}}, settings=s)
     d._on_event(InputEvent(13, "key", "press", b""))
     assert pad.events == [("press", 5)]  # the explicit binding, not home
@@ -183,8 +187,8 @@ def test_home_synthesised_when_no_explicit_binding(tmp_path, monkeypatch):
     for n in ("default", "launcher"):
         config.save_profile(config.default_profile(n))
     s = config.Settings(pulse_ms=10)
-    s.home = config.HomeConfig(key=7, profile="launcher", revert_seconds=0)
-    s.nav = config.NavConfig(prev_key=None, next_key=None)
+    s.home = config.HomeConfig(profile="launcher", revert_seconds=0)
+    s.nav = config.NavConfig(binds={7: {"tap": "home"}})
     d, _ = _daemon(settings=s)
     d.dev = FakeDev()
     d._on_event(InputEvent(7, "key", "press", b""))
@@ -197,8 +201,8 @@ def test_aux_hold_is_home_when_multipage(tmp_path, monkeypatch):
     for n in ("t", "launcher"):
         config.save_profile(config.default_profile(n))
     s = config.Settings(pulse_ms=10, hold_ms=50)
-    s.home = config.HomeConfig(key=15, profile="launcher", revert_seconds=0)
-    s.nav = config.NavConfig(prev_key=15, next_key=16)
+    s.home = config.HomeConfig(profile="launcher", revert_seconds=0)
+    s.nav = config.NavConfig(binds={15: {"tap": "prev_page", "hold": "home"}, 16: {"tap": "next_page"}})
     d, _ = _daemon(pages=[config.Page(name="a"), config.Page(name="b")], settings=s)
     d.dev = FakeDev()
 
@@ -294,3 +298,21 @@ def test_page_switch_releases_held_button():
     assert ("press", 1) in pad.events
     d.set_page("next")
     assert ("release", 1) in pad.events               # released on page change
+
+
+def test_sysload_and_status_mode():
+    sk = config.protocol.STATUS_KEY_INDEX
+    d, _ = _daemon(pages=[config.Page(keys={sk: {"status": "load"}})])
+    d.dev = FakeDev()
+
+    d._sysload()                       # prime the cpu delta
+    a, b, g = d._sysload()
+    assert 0 <= a <= 100 and 0 <= b <= 100 and g == 0
+
+    assert d._status_mode() == "load"
+    d.page.keys[sk] = {"clock": False}
+    assert d._status_mode() == "load"          # legacy `clock: false`
+    d.page.keys[sk] = {"status": "off"}
+    assert d._status_mode() == "off"
+    d.page.keys[sk] = {}
+    assert d._status_mode() == "clock"         # default

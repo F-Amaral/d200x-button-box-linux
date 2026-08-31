@@ -107,13 +107,15 @@ def build_brightness(percent: int) -> bytes:
     return frame_packets(CMD_SET_BRIGHTNESS, str(percent).encode("ascii"))[0]
 
 
-def build_small_window(mode: int = 1, time_str: str = "") -> bytes:
-    """SET_SMALL_WINDOW packet (`mode|cpu|mem|HH:MM:SS|gpu`).
+def build_small_window(mode: int = 1, time_str: str = "",
+                       cpu: int = 0, mem: int = 0, gpu: int = 0) -> bytes:
+    """SET_SMALL_WINDOW packet — `mode|cpu|mem|HH:MM:SS|gpu|24H|suffix`
+    (the 7-field form Ulanzi Studio sends; the last two were previously omitted).
 
-    Sent every couple of seconds it doubles as the firmware watchdog / keep-alive
-    that stops the deck falling back to its standalone screen. mode 1 = clock.
+    mode 0 = CPU/RAM/GPU readout, 1 = analogue clock, 2 = BACKGROUND (the
+    firmware shows the status key's own icon).
     """
-    payload = f"{mode}|0|0|{time_str}|0".encode()
+    payload = f"{mode}|{cpu}|{mem}|{time_str}|{gpu}|24H|".encode()
     return frame_packets(CMD_SET_SMALL_WINDOW, payload)[0]
 
 

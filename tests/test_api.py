@@ -117,6 +117,26 @@ def test_profiles_crud(client):
     assert status == 404
 
 
+def test_profile_rename_and_duplicate(client):
+    call, _ = client
+    call("POST", "/api/profiles/src")
+    call("PUT", "/api/profiles/src", {"keys": {"0": {"gamepad": 4, "label": "Y"}}})
+
+    status, r = call("POST", "/api/profiles/src/duplicate", {"to": "copy"})
+    assert status == 200 and r["name"] == "copy"
+    assert config.load_profile("copy").page(0).keys[0]["label"] == "Y"
+
+    status, r = call("POST", "/api/profiles/src/rename", {"to": "renamed"})
+    assert status == 200 and r["name"] == "renamed"
+    assert "src" not in config.list_profiles() and "renamed" in config.list_profiles()
+
+    status, r = call("POST", "/api/profiles/renamed/rename", {"to": "copy"})
+    assert status == 409                                   # target exists
+
+    status, r = call("POST", "/api/profiles/ghost/rename", {"to": "x"})
+    assert status == 404
+
+
 def test_games_endpoint(client):
     call, _ = client
     status, games = call("GET", "/api/games")

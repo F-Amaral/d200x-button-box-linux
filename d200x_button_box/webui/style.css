@@ -94,10 +94,6 @@ header .spacer { flex: 1; }
 
 .profilebar { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 .profilebar .lbl { color: var(--text-dim); font-size: var(--fs-xs); }
-#tabs { display: flex; gap: var(--sp-1); align-items: center; }
-#tabs button { padding: 4px 10px; font-size: var(--fs-xs); }
-#tabs button.on { background: var(--surface-2); border-color: var(--line-2); color: var(--text); }
-#tabs button.on::before { content: ""; }
 
 .statuspill {
   font-size: var(--fs-xs); color: var(--text-dim);
@@ -115,21 +111,58 @@ header .spacer { flex: 1; }
 
 .deckwarn { color: var(--danger); font-size: var(--fs-xs); font-weight: 600; }
 
-/* ---- workspace: deck (hero) + docked editor ---------------------- */
+/* ---- workspace: [rail] deck (hero) [editor] --------------------- */
 .workspace {
   display: grid;
   grid-template-columns: 1fr minmax(340px, 420px);
   gap: var(--sp-6);
   align-items: start;
   padding: var(--sp-6) var(--sp-4);
-  max-width: 1280px; margin: 0 auto;
+  max-width: 1320px; margin: 0 auto;
 }
-.deckwrap { display: flex; justify-content: center; align-items: flex-start; }
+.deckwrap { display: flex; flex-direction: column; align-items: center; gap: var(--sp-3); }
 
+@media (min-width: 1080px) {
+  .workspace { grid-template-columns: 232px 1fr minmax(340px, 420px); }
+}
 @media (max-width: 900px) {
   .workspace { grid-template-columns: 1fr; }
   #editor { position: static; }
 }
+
+/* ---- left rail (desktop): compact profile switcher ------------- */
+#rail {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: var(--sp-3); position: sticky; top: 84px;
+}
+#rail[hidden] { display: none; }
+.railhead {
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-dim); margin-bottom: var(--sp-2);
+}
+.railrow {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 8px; cursor: pointer; font-size: var(--fs-sm);
+}
+.railrow:hover { background: var(--surface-2); }
+.railrow.on { background: var(--surface-2); font-weight: 600; box-shadow: inset 2px 0 0 var(--sim); }
+.railrow > span:first-child { flex: 1; }
+.railrow input { width: 100%; font-size: var(--fs-sm); }
+.railnew { width: 100%; font-size: var(--fs-xs); border-style: dashed; color: var(--text-dim); background: transparent; }
+#rail .hint { margin-bottom: 6px; }
+.navrow {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 6px 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px;
+}
+.navrow-key {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: var(--fs-xs); color: var(--text-dim);
+}
+.navrow-key button { padding: 0 6px; border: 0; background: transparent; color: var(--text-dim); }
+.navrow-key button:hover { color: var(--danger); }
+.navrow select { width: 100%; font-size: var(--fs-xs); }
+
+@media (min-width: 1080px) { .profilebar { display: none; } }   /* the rail replaces it */
 
 /* ---- the deck --------------------------------------------------- */
 #deck {
@@ -276,7 +309,7 @@ details.more[open] > summary::before { content: "▾ "; }
 .placeholder { color: var(--text-dim); }
 .emptyhint { color: var(--text-dim); font-size: var(--fs-sm); text-align: center; padding: var(--sp-6) var(--sp-3); }
 
-/* ---- dialogs (phase 3 turns these into a drawer) --------------- */
+/* ---- dialogs (icon editor + symbol picker; settings/profiles/import use the drawer) --- */
 dialog {
   background: var(--surface); color: var(--text);
   border: 1px solid var(--line); border-radius: 14px;
@@ -289,3 +322,66 @@ dialog h3 { margin: 0 0 var(--sp-4); font-size: var(--fs-md); }
   font-size: var(--fs-xs); background: var(--surface-2); border: 1px solid var(--line);
   border-radius: var(--sp-2); padding: var(--sp-3); max-height: 12rem; overflow: auto; white-space: pre-wrap;
 }
+
+/* ---- drawer (right slide-over; replaces the settings/import/profiles modals) --- */
+#scrim {
+  position: fixed; inset: 0; background: #0009; z-index: 40;
+  opacity: 0; pointer-events: none; transition: opacity .16s;
+}
+#scrim.open { opacity: 1; pointer-events: auto; }
+#drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 41;
+  width: min(440px, 100vw);
+  background: var(--surface); border-left: 1px solid var(--line);
+  box-shadow: -10px 0 40px #0008;
+  transform: translateX(100%); transition: transform .18s ease;
+  display: flex; flex-direction: column;
+}
+#drawer.open { transform: translateX(0); }
+#drawer > header {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line);
+  position: static; background: var(--surface);
+}
+#drawer > header h3 { font-size: var(--fs-md); flex: 1; }
+#drawer > header button { background: transparent; border: 0; font-size: 20px; color: var(--text-dim); padding: 2px 6px; }
+#drawer > header button:hover { color: var(--text); }
+#drawer .dbody { flex: 1; overflow-y: auto; padding: var(--sp-4); }
+#drawer .dbody > section { margin-bottom: var(--sp-6); }
+#drawer .dbody > section > h4 {
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-dim); margin-bottom: var(--sp-2);
+}
+.concept { font-size: var(--fs-xs); color: var(--text-dim); margin: 0 0 var(--sp-3); line-height: 1.5; }
+.concept b { color: var(--text); }
+
+/* profiles list */
+.prow {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) 0; border-bottom: 1px solid var(--line);
+}
+.prow .pname { flex: 1; font-weight: 600; }
+.prow .pname input { width: 100%; font-weight: 600; }
+.prow .ptag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--text-dim);
+}
+.prow .ptag.active { color: var(--sim); border-color: var(--sim); }
+.prow .ptag.home { color: var(--box); border-color: var(--box); }
+.prow .pacts { display: flex; gap: 4px; }
+.prow .pacts button { padding: 3px 7px; font-size: var(--fs-xs); }
+
+/* page strip under the deck */
+.pagestrip { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; margin-top: var(--sp-3); justify-content: center; }
+.pagestrip .ptab {
+  display: flex; align-items: center; gap: 4px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 3px 4px 3px 10px;
+  font-size: var(--fs-xs); background: var(--surface);
+}
+.pagestrip .ptab.on { border-color: var(--line-2); background: var(--surface-2); }
+.pagestrip .ptab .pname { cursor: text; }
+.pagestrip .ptab input { width: 6rem; font-size: var(--fs-xs); padding: 1px 4px; }
+.pagestrip .ptab .x { border: 0; background: transparent; color: var(--text-dim); padding: 0 3px; font-size: 13px; }
+.pagestrip .ptab .x:hover { color: var(--danger); }
+.pagestrip .addpage { border: 1px dashed var(--line); border-radius: 8px; padding: 4px 10px; font-size: var(--fs-xs); background: transparent; color: var(--text-dim); }
+.pagestrip .auxnote { flex-basis: 100%; text-align: center; font-size: var(--fs-xs); color: var(--text-dim); }

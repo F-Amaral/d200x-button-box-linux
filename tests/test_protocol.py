@@ -124,6 +124,63 @@ def test_render_icon_glyph_and_text():
     assert glyphs.label_glyph("Wiper Speed") == "wiper"
 
 
+def test_nav_config_legacy_migration_and_roundtrip():
+    from d200x_button_box import config
+
+    # legacy settings.yaml shape -> per-button tap/hold binds
+    s = config.Settings.from_raw({
+        "nav": {"prev_key": 15, "next_key": 16},
+        "home": {"key": 15, "profile": "launcher"},
+    })
+    assert s.nav.binds[15] == {"tap": "prev_page", "hold": "home"}
+    assert s.nav.binds[16] == {"tap": "next_page"}
+    assert not hasattr(s.home, "key")
+
+    # new shape round-trips
+    back = config.Settings.from_raw(s.to_dict())
+    assert back.nav.binds == s.nav.binds
+
+    # a standalone home key (not overlapping a page key) -> tap
+    s2 = config.Settings.from_raw({"nav": {"prev_key": 15, "next_key": 16}, "home": {"key": 7}})
+    assert s2.nav.binds[7] == {"tap": "home"}
+
+
+def test_status_strip_modes():
+    import io
+    import json
+    import zipfile
+
+    from PIL import Image
+
+    from d200x_button_box import config, protocol
+    from d200x_button_box.layout import STATUS_H, STATUS_W, _cell, build_set_buttons
+
+    def zf(page):
+        return zipfile.ZipFile(io.BytesIO(build_set_buttons(page, {})))
+
+    cell = _cell(protocol.STATUS_KEY_INDEX)
+
+    # clock / load -> SmallViewMode 2, no icon (the firmware fills the strip)
+    for keys in ({"gamepad": 14}, {"status": "load", "label": "x"}):
+        with zf(config.Page(keys={protocol.STATUS_KEY_INDEX: keys})) as z:
+            m = json.loads(z.read("manifest.json"))
+        assert m[cell]["SmallViewMode"] == 2
+        assert "Icon" not in m[cell]["ViewParam"][0]
+
+    # off (custom icon) -> SmallViewMode 2 + a wide 458x196 icon on the 3_2 slot
+    with zf(config.Page(keys={protocol.STATUS_KEY_INDEX: {"status": "off", "label": "Radio"}})) as z:
+        m = json.loads(z.read("manifest.json"))
+        icon = m[cell]["ViewParam"][0]["Icon"]
+        assert m[cell]["SmallViewMode"] == 2 and icon
+        with Image.open(io.BytesIO(z.read(icon))) as im:
+            assert im.size == (STATUS_W, STATUS_H)
+
+    # heartbeat payloads: clock -> mode 1, load -> mode 0, off -> mode 2 (BACKGROUND)
+    assert b"1|0|0|12:00:00|0" in protocol.build_small_window(1, "12:00:00")
+    assert b"0|42|7||0" in protocol.build_small_window(0, "", 42, 7, 0)
+    assert protocol.build_small_window(2, "").startswith(b"\x7c\x7c") and b"2|0|0||0" in protocol.build_small_window(2, "")
+
+
 def test_send_init_skips_identical_payload():
     from d200x_button_box import config
     from d200x_button_box.device import Device

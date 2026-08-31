@@ -239,6 +239,33 @@ class Handler(BaseHTTPRequestHandler):
             d.request_reload()
             return self._json(report)
 
+        if len(seg) == 3 and seg[0] == "profiles" and seg[2] in ("rename", "duplicate") and method == "POST":
+            old, action = seg[1], seg[2]
+            to = str((self._read_body().get("to") or "")).strip()
+            if not to:
+                return self._json({"error": "missing 'to'"}, 400)
+            try:
+                new = (config.rename_profile if action == "rename"
+                       else config.duplicate_profile)(old, to)
+            except FileNotFoundError:
+                raise FileNotFoundError(old)
+            except FileExistsError as e:
+                return self._json({"error": f"'{e}' already exists"}, 409)
+            if action == "rename":
+                s = d.settings
+                touched = False
+                if s.active_profile == old:
+                    s.active_profile = new; touched = True
+                if s.home.profile == old:
+                    s.home.profile = new; touched = True
+                if touched:
+                    s.save()
+                if d.store._forced_profile == old:
+                    d.store.force_profile(new)
+            config.gc_icons()
+            d.request_reload()
+            return self._json({"ok": True, "name": new})
+
         if len(seg) == 2 and seg[0] == "profiles":
             name = seg[1]
             if method == "GET":
@@ -252,11 +279,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if method == "POST":
                 if name not in config.list_profiles():
-                    config.save_profile(config.default_profile(name))
+                    src = str((self._read_body().get("copy_from") or "")).strip()
+                    if src and src in config.list_profiles():
+                        config.duplicate_profile(src, name)
+                    else:
+                        config.save_profile(config.default_profile(name))
                 return self._json({"ok": True, "created": True})
             if method == "DELETE":
                 ok = config.delete_profile(name)
                 config.gc_icons()
+                d.request_reload()
                 return self._json({"ok": ok})
 
         if seg == ["icon-preview"] and method == "GET":

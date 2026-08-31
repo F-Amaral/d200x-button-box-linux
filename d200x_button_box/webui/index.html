@@ -10,9 +10,7 @@
   <div class="profilebar">
     <span class="lbl">profile</span>
     <select id="profileSel" title="active profile"></select>
-    <span id="tabs"></span>
-    <button id="addPage" class="ghost" title="add a page">+ page</button>
-    <button id="pageGear" class="ghost" title="this page: name + default icon style">⚙</button>
+    <button id="profilesBtn" class="ghost" title="add / rename / delete profiles">Manage…</button>
   </div>
 
   <span class="spacer"></span>
@@ -20,38 +18,27 @@
   <span id="status" class="statuspill"></span>
   <button id="saveBtn" class="primary" hidden>Save</button>
   <button id="listenBtn" class="ghost" title="press a control on the deck to select it here">Listen</button>
-  <button id="importBtn" class="ghost">Import</button>
   <button id="iconsBtn" class="ghost">Icons</button>
   <button id="settingsBtn" class="ghost" title="settings">Settings</button>
 </header>
 
 <div class="workspace">
-  <div class="deckwrap"><div id="deck"></div></div>
+  <aside id="rail" hidden></aside>
+  <div class="deckwrap">
+    <div id="deck"></div>
+    <div id="pagestrip" class="pagestrip"></div>
+  </div>
   <aside id="editor"></aside>
 </div>
 
-<dialog id="settings">
-  <h3>Device &amp; behaviour</h3>
-  <div class="fld"><label>Brightness</label><span><input id="s_bri" type="range" min="0" max="100"> <span id="s_bri_v"></span></span></div>
-  <div class="fld"><label>Heartbeat</label><input id="s_hb" type="number" step="0.5" min="0.5"><div class="hint">write interval (s) that keeps the deck awake — don't set to 0</div></div>
-  <div class="fld"><label>Grab keyboard</label><input id="s_grab" type="checkbox"><div class="hint">swallow the deck's built-in keyboard macros</div></div>
-  <div class="fld"><label>Home key</label><select id="s_homekey"></select><div class="hint">jumps to the home profile from any profile</div></div>
-  <div class="fld"><label>Home →</label><select id="s_homeprof"></select></div>
-  <div class="fld"><label>Revert after</label><input id="s_revert" type="number" step="1" min="0"><div class="hint">idle seconds before returning to auto-detect (0 = stay)</div></div>
-  <p class="hint">API host / port / token: edit <code>settings.yaml</code>.</p>
-  <div class="dlg-actions"><button id="s_cancel" class="ghost">Cancel</button><button id="s_save" class="primary">Save</button></div>
-</dialog>
-
-<dialog id="importDlg">
-  <h3>Import labels from a game</h3>
-  <p class="hint">Reads the game's own control bindings and labels the deck buttons that
-  are bound to the <b>D200x Button Box</b> controller in-game.</p>
-  <div class="fld"><label>Game</label><select id="i_game"></select></div>
-  <div class="fld"><label>Path</label><input id="i_path" type="text" placeholder="game install folder"><div class="hint" id="i_pathhint"></div></div>
-  <div class="fld"><label>Overwrite</label><input id="i_over" type="checkbox" checked><div class="hint">replace labels you set by hand too</div></div>
-  <div id="i_report" class="report" hidden></div>
-  <div class="dlg-actions"><button id="i_cancel" class="ghost">Close</button><button id="i_run" class="primary">Import</button></div>
-</dialog>
+<div id="scrim"></div>
+<div id="drawer" aria-hidden="true">
+  <header>
+    <h3 id="drawer_title">Settings</h3>
+    <button id="drawer_close" title="close">✕</button>
+  </header>
+  <div id="drawer_body" class="dbody"></div>
+</div>
 
 <dialog id="iconGen">
   <h3 id="ig_title">Icon</h3>
@@ -60,13 +47,13 @@
     <img id="ig_prev" width="110" height="110" style="background:#0d0f13;border:1px solid var(--line);border-radius:8px" alt="">
     <div style="flex:1;min-width:200px">
       <div class="fld" id="ig_text_fld"><label>Text</label><input id="ig_text" type="text" maxlength="4"><div class="hint">1–4 letters (empty = auto from the label)</div></div>
-      <div class="fld"><label>Frame</label><select id="ig_mode"><option value="solid">solid</option><option value="ring">outline only</option></select></div>
-      <div class="fld"><label>Shape</label><select id="ig_shape"><option value="circle">circle</option><option value="round">rounded square</option></select></div>
+      <div class="fld" id="ig_mode_fld"><label>Frame</label><select id="ig_mode"><option value="solid">solid</option><option value="ring">outline only</option></select></div>
+      <div class="fld" id="ig_shape_fld"><label>Shape</label><select id="ig_shape"><option value="circle">circle</option><option value="round">rounded square</option></select></div>
       <div class="fld" id="ig_font_fld"><label>Font</label><select id="ig_font"><option value="sans">sans</option><option value="condensed">condensed</option><option value="mono">mono</option><option value="liberation">liberation</option></select></div>
-      <div class="fld"><label>Frame line</label><input id="ig_border" type="color"></div>
+      <div class="fld" id="ig_border_fld"><label>Frame line</label><input id="ig_border" type="color"></div>
       <div class="fld" id="ig_fill_fld"><label>Frame fill</label><input id="ig_fill" type="color"><div class="hint">only visible with a solid frame</div></div>
       <div class="fld"><label id="ig_fg_lbl">Icon / text</label><input id="ig_fg" type="color"></div>
-      <div class="fld"><label></label><label style="display:flex;gap:.4rem;align-items:center"><input id="ig_sync" type="checkbox"> icon colour = frame line</label></div>
+      <div class="fld" id="ig_sync_fld"><label></label><label style="display:flex;gap:.4rem;align-items:center"><input id="ig_sync" type="checkbox"> icon colour = frame line</label></div>
     </div>
   </div>
   <div class="dlg-actions"><button id="ig_reset" class="ghost">use page default</button><button id="ig_cancel" class="ghost">Cancel</button><button id="ig_use" class="primary">Use this icon</button></div>

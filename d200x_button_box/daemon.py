@@ -141,6 +141,12 @@ class Daemon:
             self._queued_profile = str(binding["profile"])
         elif "page" in binding and trigger:
             self._queued_page = str(binding["page"])
+        elif "nav" in binding and trigger:
+            fn = str(binding["nav"])
+            if fn == "home":
+                self._queued_profile = "home"
+            elif fn in ("prev_page", "next_page"):
+                self._queued_page = "prev" if fn == "prev_page" else "next"
 
     def _send_key(self, keys: str) -> None:
         for tool in (["ydotool", "key", keys], ["xdotool", "key", keys]):
@@ -156,20 +162,24 @@ class Daemon:
 
     # --- navigation (aux buttons / home) --------------------------------
     def _nav_binding(self, i: int) -> dict | None:
-        """Synthesise a binding for a key that has no explicit one, from
-        settings.nav / settings.home (page prev/next, press-and-hold home)."""
-        nav, home = self.settings.nav, self.settings.home
-        is_prev = nav.prev_key == i
-        is_next = nav.next_key == i
-        is_home = home.key is not None and home.key == i
-        if not (is_prev or is_next or is_home):
+        """Synthesise a binding for an aux/nav key from settings.nav.binds —
+        {index: {"tap": fn, "hold": fn}}, fn in home / prev_page / next_page."""
+        cfg = self.settings.nav.binds.get(i)
+        if not cfg:
             return None
-        if is_home and (is_prev or is_next) and self.profile.n_pages > 1:
-            page = {"page": "prev" if is_prev else "next"}
-            return {**page, "hold": {"profile": "home"}, "role": "nav"}
-        if is_home:
-            return {"profile": "home", "role": "nav"}
-        return {"page": "prev" if is_prev else "next", "role": "nav"}
+
+        def act(fn):
+            return ({"profile": "home"} if fn == "home"
+                    else {"page": "prev"} if fn == "prev_page"
+                    else {"page": "next"} if fn == "next_page" else None)
+
+        tap, hold = act(cfg.get("tap")), act(cfg.get("hold"))
+        if not tap and not hold:
+            return None
+        b = dict(tap or {}, role="nav")
+        if hold:
+            b["hold"] = hold
+        return b
 
     # --- event routing -----------------------------------------------------
     def _on_event(self, ev: protocol.InputEvent) -> None:
@@ -262,16 +272,54 @@ class Daemon:
         self._publish({"type": "device", "connected": False})
 
     # --- deck layout -----------------------------------------------------
+    def _status_mode(self) -> str:
+        """What the wide status strip shows: 'clock' | 'load' | 'off' (own icon)."""
+        from . import protocol
+
+        b = self.page.keys.get(protocol.STATUS_KEY_INDEX, {})
+        m = b.get("status")
+        if m in ("clock", "load", "off"):
+            return m
+        return "load" if b.get("clock") is False else "clock"
+
+    def _sysload(self) -> tuple[int, int, int]:
+        """(cpu%, mem%, gpu%) from /proc for the status strip's load mode."""
+        cpu = 0
+        try:
+            with open("/proc/stat") as f:
+                parts = [int(x) for x in f.readline().split()[1:]]
+            idle, total = parts[3] + parts[4], sum(parts)
+            prev = getattr(self, "_cpu_prev", None)
+            self._cpu_prev = (idle, total)
+            if prev and total > prev[1]:
+                cpu = round(100 * (1 - (idle - prev[0]) / (total - prev[1])))
+        except OSError:
+            pass
+        mem = 0
+        try:
+            info = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    k, _, v = line.partition(":")
+                    info[k] = int(v.split()[0])
+            if info.get("MemTotal"):
+                mem = round(100 * (1 - info.get("MemAvailable", 0) / info["MemTotal"]))
+        except OSError:
+            pass
+        return max(0, min(100, cpu)), max(0, min(100, mem)), 0
+
     def push_layout(self, force: bool = False) -> None:
         if self.dev is None:
             return
         try:
             wrote = self.dev.send_init(self.page, self.settings.icon, quiet=True, force=force)
+            if self._status_mode() == "off":
+                self.dev.small_window_background()   # show the status key's own icon
         except DeviceGone:
             self._disconnect_device("write during layout push")
             return
         if wrote:
-            self._last_beat = 0.0  # redraw the clock now, don't wait for the heartbeat
+            self._last_beat = 0.0  # refresh the strip now, don't wait for the heartbeat
 
     def set_page(self, spec: str | int) -> None:
         n = self.profile.n_pages
@@ -411,7 +459,8 @@ class Daemon:
                     self._tick_home(now, got_input)
 
                     if self.settings.heartbeat_seconds and now - self._last_beat > self.settings.heartbeat_seconds:
-                        self.dev.heartbeat()
+                        m = self._status_mode()
+                        self.dev.heartbeat(m, self._sysload() if m == "load" else (0, 0, 0))
                         self._last_beat = now
                 except DeviceGone as e:
                     self._disconnect_device(str(e))
@@ -425,6 +474,11 @@ class Daemon:
                 self._reload_now = False
                 if self.store.resolve(detected=detected):
                     self._kbd.enabled = self.settings.grab_keyboard
+                    if self.dev is not None and self.settings.brightness is not None:
+                        try:
+                            self.dev.set_brightness(self.settings.brightness)
+                        except DeviceGone as e:
+                            self._disconnect_device(str(e))
                     self._activate()
                 last_reload = now
             if self._repush:

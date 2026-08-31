@@ -4,14 +4,18 @@
 
 const KEY_ROWS = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13]];
 const AUX_L = 15, AUX_R = 16, STATUS = 13, KNOBS = [17, 18, 19];
-const ACTIONS = ["none", "gamepad", "key", "command", "profile", "page"];
+const ACTIONS = ["none", "gamepad", "nav", "key", "command", "profile", "page"];
+const ACTION_LABEL = { nav: "navigate" };
 const ACTION_HINT = {
   gamepad: "virtual joystick button the game binds",
+  nav: "jump home or flip pages — like the aux buttons, but on a screen key",
   key: "keystroke (ydotool/xdotool)",
   command: "shell command on the daemon host",
   profile: "switch profile — or auto / next / prev / home",
   page: "switch page in this profile",
 };
+const NAV_FNS = [["home", "Home"], ["prev_page", "Previous page"], ["next_page", "Next page"]];
+const NAV_FN_LABEL = Object.fromEntries(NAV_FNS);
 const STYLE_KEYS = ["mode", "shape", "fill", "border", "fg", "font"];
 const NAV_BASE = { mode: "ring", shape: "round", fill: "#0d0f13", border: "#7d8794", fg: "#aeb6c2", font: "sans" };
 const GAME_BASE = { mode: "solid", shape: "circle", fill: "#2a3140", border: "#4a9eff", fg: "#ffffff", font: "sans" };
@@ -72,7 +76,7 @@ function serialize() {
     ? dump(p.pages[0]) : { pages: p.pages.map(dump) };
 }
 
-function isNav(b) { return b.role === "nav" || "page" in b || "profile" in b; }
+function isNav(b) { return b.role === "nav" || "page" in b || "profile" in b || "nav" in b; }
 // sim = a car input (gamepad, or a still-empty key); box = nav / util / macro
 function registerOf(b) {
   if (isNav(b)) return "box";
@@ -148,7 +152,14 @@ function onInput(m) {
 }
 
 // ---- render orchestration --------------------------------------
-function render() { syncProfileSel(); renderTabs(); renderDeck(); renderEditor(); renderStatus(); }
+function render() { renderChrome(); renderDeck(); renderEditor(); renderStatus(); }
+// chrome = everything outside the deck/editor that follows the profile list
+function renderChrome() {
+  syncProfileSel(); renderPageStrip(); renderRail();
+  if (DRAWER_PANEL === "profiles" && $("#drawer").classList.contains("open")) {
+    const b = $("#drawer_body"); b.innerHTML = ""; buildProfiles(b);
+  }
+}
 function renderStatus(kind) {
   const s = $("#status");
   s.className = "statuspill";
@@ -161,18 +172,61 @@ function syncProfileSel() {
   const ps = $("#profileSel"); ps.innerHTML = "";
   S.profiles.forEach(n => ps.append(el("option", { value: n, textContent: n, selected: n === S.name })));
 }
-function renderTabs() {
-  const tb = $("#tabs"); tb.innerHTML = "";
+function gotoPage(i) {
+  S.page = i; S.sel = null; render();
+  api("page", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ page: i }) });
+}
+function renderPageStrip() {
+  const strip = $("#pagestrip"); strip.innerHTML = "";
+  const multi = pages().length > 1;
   pages().forEach((pg, i) => {
-    const b = el("button", { textContent: pg.name || ("page " + (i + 1)) });
-    b.classList.toggle("on", i === S.page);
-    b.onclick = () => {
-      S.page = i; S.sel = null; render();
-      api("page", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ page: i }) });
+    const tab = el("div", { class: "ptab" + (i === S.page ? " on" : "") });
+    const name = el("span", { class: "pname", textContent: pg.name || ("page " + (i + 1)) });
+    name.onclick = () => {
+      if (i !== S.page) { gotoPage(i); return; }
+      const inp = el("input", { value: pg.name || "", placeholder: "page " + (i + 1) });
+      inp.onblur = inp.onchange = () => { pg.name = inp.value.trim() || undefined; renderPageStrip(); renderDeck(); touched(); };
+      inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
+      tab.replaceChild(inp, name); inp.focus(); inp.select();
     };
-    b.ondblclick = () => { const n = prompt("Page name:", pg.name); if (n !== null) { pg.name = n || ""; render(); touched(); } };
-    tb.append(b);
+    tab.append(name);
+    if (multi) {
+      const x = el("button", { class: "x", textContent: "✕", title: "delete this page" });
+      x.onclick = () => {
+        if (!confirm("Delete " + (pg.name || "page " + (i + 1)) + "?")) return;
+        pages().splice(i, 1);
+        S.page = Math.min(S.page, pages().length - 1); S.sel = null;
+        render(); touched();
+      };
+      tab.append(x);
+    }
+    strip.append(tab);
   });
+  const add = el("button", { class: "addpage", textContent: "＋ page" });
+  add.onclick = addPage;
+  strip.append(add);
+  const gear = el("button", { class: "addpage", textContent: "⚙ default look", title: "the frame + colour every auto icon on this page starts from" });
+  gear.onclick = openPageStyle;
+  strip.append(gear);
+  if (multi)
+    strip.append(el("div", { class: "auxnote", textContent: "the two round aux buttons flip pages — hold the left one for home" }));
+}
+function addPage() {
+  const newPage = { name: "", style: {}, keys: {}, knobs: {} };
+  // 1 -> 2 pages: the aux buttons become page nav (automatic). Move anything
+  // explicitly bound on them onto the new page's first free keys.
+  if (pages().length === 1) {
+    let slot = 0;
+    for (const aux of [AUX_L, AUX_R]) {
+      const b = pages()[0].keys[aux];
+      if (b && !b.role) {
+        while (newPage.keys[slot]) slot++;
+        newPage.keys[slot++] = b;
+        delete pages()[0].keys[aux];
+      }
+    }
+  }
+  pages().push(newPage); S.page = pages().length - 1; S.sel = null; render(); touched();
 }
 
 // ---- deck ------------------------------------------------------
@@ -183,7 +237,7 @@ function iconImg(url) {
   return im.isConnected ? im.cloneNode() : im;  // same icon on two keys -> clone, no reload
 }
 function labelFor(id) {
-  return id === STATUS ? "status" : id === AUX_L ? "aux ◀" : id === AUX_R ? "aux ▶" : "key " + id;
+  return keyName(KNOBS.includes(id) ? "knob" : "key", id, null);
 }
 function iconURL(path) {
   const n = (path || "").split("/").pop();
@@ -243,19 +297,23 @@ function iconCaption(b) {
     default: {
       const g = derivedGlyph(b);
       if (g) return `auto — ${symbolKind(g)} “${g}”`;
-      if (b.label) return `auto — letters from the label`;
+      if (b.label) return `auto — from the label (a matching symbol, else initials)`;
       return "auto — add a label or pick a symbol";
     }
   }
 }
 
+const NAV_ACT = fn => fn === "home" ? { profile: "home" }
+  : fn === "prev_page" ? { page: "prev" }
+    : fn === "next_page" ? { page: "next" } : null;
 function navBindingFor(id) {
-  const n = S.settings?.nav || {}, h = S.settings?.home || {};
-  const isPrev = n.prev_key === id, isNext = n.next_key === id, isHome = h.key != null && h.key === id;
-  if (!(isPrev || isNext || isHome)) return null;
-  if (isHome && (isPrev || isNext) && pages().length > 1) return { page: isPrev ? "prev" : "next", hold: { profile: "home" }, role: "nav" };
-  if (isHome) return { profile: "home", role: "nav" };
-  return { page: isPrev ? "prev" : "next", role: "nav" };
+  const cfg = S.settings?.nav?.binds?.[id];
+  if (!cfg) return null;
+  const tap = NAV_ACT(cfg.tap), hold = NAV_ACT(cfg.hold);
+  if (!tap && !hold) return null;
+  const b = Object.assign({ role: "nav" }, tap || {});
+  if (hold) b.hold = hold;
+  return b;
 }
 function cellFor(id, cls) {
   const explicit = curPage().keys[id];
@@ -265,11 +323,17 @@ function cellFor(id, cls) {
   c.dataset.id = id;
   if (!explicit && !b.role && id !== STATUS) c.classList.add("empty");
   if (S.sel && S.sel.kind === "key" && S.sel.index === id) c.classList.add("sel");
-  if (id === (S.settings?.home?.key)) c.append(el("span", { class: "badge", textContent: "HOME" }));
-  const u = id === STATUS ? iconURL(b.icon) : previewURL(b);
-  if (u) c.append(iconImg(u));
-  else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id), title: b.label || "" }));
-  const v = explicit ? shortVal(b) : (b.role ? (b.hold ? "tap: page / hold: home" : b.page ? ("page " + b.page) : "home") : "");
+  const navCfg = S.settings?.nav?.binds?.[id];
+  if (navCfg?.tap === "home" || navCfg?.hold === "home") c.append(el("span", { class: "badge", textContent: "HOME" }));
+  const sMode = id === STATUS ? (b.status || (b.clock === false ? "load" : "clock")) : null;
+  if (id === STATUS && sMode !== "off") {
+    c.append(el("div", { class: "lbl", textContent: sMode === "load" ? "▤ system load" : "🕐 clock" }));
+  } else {
+    const u = previewURL(b);
+    if (u) c.append(iconImg(u));
+    else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id), title: b.label || "" }));
+  }
+  const v = explicit ? shortVal(b) : (navCfg ? navRoleText(navCfg) : "");
   if (v) c.append(el("div", { class: "v", textContent: v, title: v }));
   c.onclick = () => selectControl("key", id);
   return c;
@@ -277,21 +341,22 @@ function cellFor(id, cls) {
 function renderDeck() {
   const d = $("#deck"); d.innerHTML = "";
   for (const row of KEY_ROWS) for (const id of row) d.append(cellFor(id, id === STATUS ? "wide" : ""));
+  // bottom row on the real D200x: the two round aux buttons, then the 3 encoders
   d.append(cellFor(AUX_L, "round"));
+  d.append(cellFor(AUX_R, "round"));
   for (const k of KNOBS) {
     const kb = curPage().knobs[k] || {};
     const c = el("div", { class: "cell knob reg-box" });
     c.dataset.id = k;
     if (S.sel && S.sel.kind === "knob" && S.sel.index === k) c.classList.add("sel");
     if (k === (S.settings?.home?.key)) c.append(el("span", { class: "badge", textContent: "HOME" }));
-    c.append(el("div", { class: "lbl", textContent: "⟳ enc " + k }));
+    c.append(el("div", { class: "lbl", textContent: "⟳ " + labelFor(k) }));
     const parts = ["left", "right", "press"].filter(s => kb[s] && actOf(kb[s]) !== "none")
       .map(s => kb[s].label || (s + " " + shortVal(kb[s])));
     if (parts.length) c.append(el("div", { class: "v", textContent: parts.join(" · "), title: parts.join(" · ") }));
     c.onclick = () => selectControl("knob", k);
     d.append(c);
   }
-  d.append(cellFor(AUX_R, "round"));
 }
 function selectControl(kind, index) { S.sel = { kind, index }; renderDeck(); renderEditor(); }
 
@@ -299,7 +364,7 @@ function selectControl(kind, index) { S.sel = { kind, index }; renderDeck(); ren
 function actionBlock(binding, onChange) {
   const wrap = el("div");
   const sel = el("select");
-  ACTIONS.forEach(a => sel.append(el("option", { value: a, textContent: a, selected: a === actOf(binding) })));
+  ACTIONS.forEach(a => sel.append(el("option", { value: a, textContent: ACTION_LABEL[a] || a, selected: a === actOf(binding) })));
   const valFld = el("div", { class: "fld" });
   const rebuild = () => {
     valFld.innerHTML = "";
@@ -307,9 +372,11 @@ function actionBlock(binding, onChange) {
     if (a === "none") return;
     let input;
     if (a === "gamepad") input = el("input", { type: "number", min: 1, value: binding.gamepad || 1 });
+    else if (a === "nav") { input = el("select"); NAV_FNS.forEach(([v, t]) => input.append(el("option", { value: v, textContent: t, selected: v === (binding.nav || "home") }))); }
     else if (a === "profile") { input = el("select"); [...S.profiles, "auto", "next", "prev", "home"].forEach(o => input.append(el("option", { value: o, textContent: o, selected: o === binding.profile }))); }
     else if (a === "page") { input = el("select"); ["next", "prev", "0", "1", "2", "3", "4"].forEach(o => input.append(el("option", { value: o, textContent: o, selected: String(binding.page) === o }))); }
     else input = el("input", { type: "text", value: binding[a] || "", placeholder: a === "key" ? "F13" : "e.g. sh -c 'crew-chief …'" });
+    if (a === "nav" && !binding.nav) binding.nav = input.value;   // seed the default
     input.oninput = input.onchange = () => { setAct(binding, a, input.value); onChange(); };
     valFld.append(el("label", { textContent: "value" }), input);
     if (a === "gamepad") {
@@ -318,6 +385,7 @@ function actionBlock(binding, onChange) {
       valFld.append(el("span"), el("label", { style: "display:flex;gap:.4rem;align-items:center" }, [m, "pulse (tap, not hold)"]));
     }
     if (ACTION_HINT[a]) valFld.append(el("div", { class: "hint", textContent: ACTION_HINT[a] }));
+    if (a === "gamepad" && S.bindGame) valFld.append(gameBindRow(Number(binding.gamepad) || 1));
   };
   sel.onchange = () => { setAct(binding, sel.value, sel.value === "gamepad" ? 1 : ""); rebuild(); onChange(); };
   rebuild();
@@ -369,12 +437,17 @@ function initials(s) {
   return (w.length === 1 ? w[0] : w.map(x => x[0]).join("")).slice(0, 4).toUpperCase();
 }
 // does mode `m` render on a circle/square frame? (frameless tell-tales don't)
-function usesFrame(m, kb) {
-  if (m === "image") return false;
-  if (m === "symbol") return !TELLTALE_SET.has(kb.glyph);
-  if (m === "letters") return true;
-  const g = derivedGlyph(kb);
-  return g ? !TELLTALE_SET.has(g) : true;   // label-initials sit on a frame
+// the effective glyph for the current mode (for deciding frame vs colour-only)
+function modeGlyph(m, kb) {
+  if (m === "symbol") return kb.glyph || null;
+  if (m === "auto") return derivedGlyph(kb) || null;
+  return null;   // letters / image
+}
+// a tell-tale is frameless — only its colour is adjustable, not a frame
+function frameKind(m, kb) {
+  if (m === "image") return null;
+  const g = modeGlyph(m, kb);
+  return (g && TELLTALE_SET.has(g)) ? "colour" : "frame";
 }
 function lookField(kb, index) {
   const memk = `${S.name}/${S.page}/${index}`;
@@ -393,7 +466,7 @@ function lookField(kb, index) {
   let mode = iconSource(kb);   // seg control drives this; may lead the data briefly
 
   const captionFor = () => {
-    if (mode === "symbol" && !kb.glyph) return "pick a symbol";
+    if (mode === "symbol" && !kb.glyph) return "showing auto — Choose a symbol to override";
     if (mode === "image" && !kb.icon) return "upload a PNG";
     return iconCaption(kb);
   };
@@ -415,11 +488,9 @@ function lookField(kb, index) {
     if (m === "auto") { delete kb.glyph; delete kb.icon_text; delete kb.icon; }
     if (m === "symbol") {
       delete kb.icon; delete kb.icon_text;
-      if (!kb.glyph) {
-        const g = SYMBOL_MEM[memk] || derivedGlyph(kb);   // adopt the current symbol; picker only if there's none
-        if (g) kb.glyph = g;
-        else { openSymbolPicker("", applySymbol); return; }
-      }
+      // adopt the current effective symbol; never auto-open the picker
+      // (the "Choose…" button does that when the user wants it)
+      if (!kb.glyph) { const g = SYMBOL_MEM[memk] || derivedGlyph(kb); if (g) kb.glyph = g; }
     }
     if (m === "letters") { delete kb.glyph; delete kb.icon; if (!kb.icon_text) kb.icon_text = initials(kb.label) || undefined; }
     if (m === "image") { delete kb.glyph; delete kb.icon_text; }
@@ -466,9 +537,11 @@ function lookField(kb, index) {
       body.append(row);
     }
 
-    if (usesFrame(mode, kb)) {
+    const fk = frameKind(mode, kb);
+    if (fk) {
+      const noun = fk === "colour" ? "Colour" : "Frame & colour";
       const frame = el("div", { class: "lookframe" });
-      frame.append(document.createTextNode(kb.icon_style ? "Frame & colour — custom  " : "Frame & colour — page default  "));
+      frame.append(document.createTextNode(noun + (kb.icon_style ? " — custom  " : " — page default  ")));
       frame.append(linkBtn("edit", () => openFrame(kb, mode)));
       if (kb.icon_style) frame.append(linkBtn("reset", () => { delete kb.icon_style; paint(); commit(); }));
       body.append(frame);
@@ -477,7 +550,12 @@ function lookField(kb, index) {
     draw();
   }
 
-  lab.oninput = () => { kb.label = lab.value || undefined; commit(); };
+  lab.oninput = () => {
+    kb.label = lab.value || undefined;
+    const h = document.querySelector("#editor h2");   // keep the title in sync without losing focus
+    if (h) h.textContent = keyName("key", index, kb);
+    commit();
+  };
   paint();
   return grp;
 }
@@ -485,14 +563,20 @@ function openFrame(kb, mode) {
   const baseline = registerOf(kb) === "box"
     ? NAV_BASE
     : Object.assign({}, GAME_BASE, S.settings?.icon?.game, curPage().style);
-  // preview what the key actually shows: letters -> the text, otherwise the glyph
-  const glyph = (mode === "letters" || mode === "image") ? null : (kb.glyph || derivedGlyph(kb) || null);
+  // preview what the key actually shows on the device
+  const textMode = mode === "letters" || mode === "image";
+  const glyph = textMode ? null : (kb.glyph || derivedGlyph(kb) || null);
+  // no explicit/derived glyph but the label keyword-matches one server-side:
+  // let the preview resolve it from the label rather than fall back to "AB"
+  const label = (!textMode && !glyph && kb.label) ? kb.label : null;
+  const frameless = !!(glyph && TELLTALE_SET.has(glyph));
   openIconStyle(kb, style => {
     if (Object.keys(style).length) kb.icon_style = style; else delete kb.icon_style;
     renderEditor(); renderDeck(); touched();
-  }, "Frame & colour", {
-    noText: true, baseline, glyph,
-    note: "Just this key. “use page default” drops the override and follows the page again.",
+  }, frameless ? "Colour — this key" : "Frame & colour — this key", {
+    noText: true, baseline, glyph, label, style: kb.icon_style || {},
+    saveLabel: "Apply", clearLabel: "Use page default",
+    note: "Overrides the page default for this key only.",
   });
 }
 
@@ -535,6 +619,37 @@ $("#sym_q").oninput = () => buildSymGrid($("#sym_q").value.trim().toLowerCase())
 $("#sym_cancel").onclick = () => $("#symPick").close();
 $("#sym_clear").onclick = () => { $("#symPick").close(); if (SYM_ONPICK) SYM_ONPICK(null); };
 
+// ---- naming --------------------------------------------------
+function keyName(kind, index, b) {
+  if (b && b.label) return b.label;
+  if (kind === "knob") return "Encoder " + (KNOBS.indexOf(index) + 1);
+  if (index === STATUS) return "Status key";
+  if (index === AUX_L) return "Aux left";
+  if (index === AUX_R) return "Aux right";
+  return "Key " + (index + 1);
+}
+function navRoleText(cfg) {
+  const part = s => cfg[s] ? `${s}: ${NAV_FN_LABEL[cfg[s]]}` : null;
+  return [part("tap"), part("hold")].filter(Boolean).join(" · ") || "unassigned";
+}
+function keyRole(kind, index, b) {
+  if (kind === "knob") return "Rotary encoder";
+  if (index === AUX_L || index === AUX_R) {
+    const cfg = S.settings?.nav?.binds?.[index];
+    return cfg ? "Navigation — " + navRoleText(cfg) : "Aux button — unassigned";
+  }
+  const a = actOf(b);
+  return ({
+    none: "Unassigned",
+    gamepad: "Controller button " + (b.gamepad || 1) + (b.momentary ? " · pulse" : ""),
+    nav: "Navigate → " + (NAV_FN_LABEL[b.nav] || "?"),
+    key: "Sends a keystroke",
+    command: "Runs a command",
+    profile: "Switches profile → " + (b.profile || "?"),
+    page: "Page " + (b.page || "?"),
+  })[a] || a;
+}
+
 // ---- editor: main --------------------------------------------
 function renderEditor() {
   const e = $("#editor"); e.innerHTML = "";
@@ -551,31 +666,63 @@ function renderEditor() {
   document.body.dataset.register = reg;
   e.classList.toggle("reg-box", reg === "box");
 
-  e.append(el("div", { class: "eyebrow", textContent: reg === "sim" ? "sim control" : "box control" }));
-  e.append(el("h2", { textContent: (isKnob ? "Encoder " : "Key ") + index }));
+  e.append(el("div", { class: "eyebrow", textContent: keyRole(kind, index, b) }));
+  e.append(el("h2", { textContent: keyName(kind, index, curPage().keys[index] || b) }));
   e.append(el("div", {
     class: "who",
     textContent: isKnob ? "rotary encoder — turn left / right / click"
-      : index === STATUS ? "wide status key (also shows the clock)"
-        : index === AUX_L || index === AUX_R ? "round aux button — no screen"
+      : index === STATUS ? "wide key — the firmware clock / system readout strip"
+        : index === AUX_L || index === AUX_R ? "round button, no screen"
           : "LCD key",
   }));
+
+  // keep the title + role + register accent current as the binding changes
+  const syncHeader = kb => {
+    const r = isKnob ? "box" : registerOf(kb);
+    document.body.dataset.register = r;
+    e.classList.toggle("reg-box", r === "box");
+    e.querySelector(".eyebrow").textContent = keyRole(kind, index, kb);
+    e.querySelector("h2").textContent = keyName(kind, index, kb);
+  };
 
   if (kind === "key") {
     const kb = keyB(index);
     const g1 = el("div", { class: "grp" }, [el("h3", { textContent: "Action" })]);
-    g1.append(actionBlock(kb, () => { renderDeck(); touched(); }));
+    g1.append(actionBlock(kb, () => { syncHeader(kb); renderDeck(); touched(); }));
     e.append(g1);
 
     if (index === AUX_L || index === AUX_R) {
-      e.append(el("p", { class: "hint", style: "margin-top:1rem", textContent: "This round button has no screen — a label or icon has no effect on the device. When there is more than one page it drives page navigation automatically." }));
+      const nb = navBindingFor(index);
+      e.append(el("p", { class: "hint", style: "margin-top:1rem", textContent:
+        (nb ? `Currently: ${keyRole(kind, index, b)}. ` : "") +
+        "This round button has no screen. Its home / page-nav role is set in the Navigation panel." }));
       const clr0 = el("button", { class: "ghost danger", textContent: "clear this control", style: "margin-top:1rem" });
       clr0.onclick = () => { delete curPage().keys[index]; S.sel = null; render(); touched(); };
       e.append(clr0);
       return;
     }
 
-    e.append(lookField(kb, index));
+    if (index === STATUS) {
+      const cur = kb.status === "load" || kb.clock === false ? "load" : (kb.status === "off" ? "off" : "clock");
+      const sel = el("select");
+      [["clock", "Clock"], ["load", "System load (CPU · RAM)"], ["off", "Custom icon"]].forEach(([v, t]) =>
+        sel.append(el("option", { value: v, textContent: t, selected: v === cur })));
+      sel.onchange = () => {
+        delete kb.clock;
+        if (sel.value === "clock") delete kb.status; else kb.status = sel.value;
+        renderEditor(); renderDeck(); touched();
+      };
+      const g = el("div", { class: "grp" }, [el("h3", { textContent: "Status strip" })]);
+      g.append(el("div", { class: "fld" }, [el("label", { textContent: "shows" }), sel]));
+      g.append(el("div", { class: "hint", style: "grid-column:2", textContent:
+        cur === "off"
+          ? "The firmware small window is set to BACKGROUND mode so this wide key shows the icon below."
+          : "The firmware fills this wide key with the clock / system readout." }));
+      e.append(g);
+      if (cur === "off") e.append(lookField(kb, index));
+    } else {
+      e.append(lookField(kb, index));
+    }
   } else {
     for (const sub of ["left", "right", "press"]) {
       const box = el("div", { class: "knobsub" }, [el("b", { textContent: sub === "press" ? "click" : "turn " + sub })]);
@@ -597,64 +744,281 @@ function renderEditor() {
   e.append(clr);
 }
 
-// ---- settings dialog ----------------------------------------
-function openSettings() {
-  const s = S.settings;
-  $("#s_bri").value = s.device.brightness ?? 80; $("#s_bri_v").textContent = $("#s_bri").value;
-  $("#s_hb").value = s.device.heartbeat_seconds;
-  $("#s_grab").checked = s.device.grab_keyboard;
-  $("#s_revert").value = s.home.revert_seconds;
-  const hk = $("#s_homekey"); hk.innerHTML = ""; hk.append(el("option", { value: "", textContent: "(off)" }));
-  [...KEY_ROWS.flat(), AUX_L, AUX_R, ...KNOBS].forEach(i =>
-    hk.append(el("option", { value: i, textContent: labelFor(i) + " (" + i + ")", selected: String(s.home.key) === String(i) })));
-  const hp = $("#s_homeprof"); hp.innerHTML = "";
-  S.profiles.forEach(n => hp.append(el("option", { value: n, textContent: n, selected: n === s.home.profile })));
-  $("#settings").showModal();
-}
-$("#s_bri").oninput = () => $("#s_bri_v").textContent = $("#s_bri").value;
-$("#s_cancel").onclick = () => $("#settings").close();
-$("#s_save").onclick = async () => {
-  const s = S.settings;
-  s.device.brightness = Number($("#s_bri").value);
-  s.device.heartbeat_seconds = Number($("#s_hb").value);
-  s.device.grab_keyboard = $("#s_grab").checked;
-  s.home.key = $("#s_homekey").value === "" ? null : Number($("#s_homekey").value);
-  s.home.profile = $("#s_homeprof").value;
-  s.home.revert_seconds = Number($("#s_revert").value);
-  await api("settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(s) });
-  $("#settings").close(); renderDeck();
+// ---- drawer (settings / profiles / import) ------------------
+const PANELS = {
+  profiles: { title: "Profiles", build: buildProfiles },
+  settings: { title: "Settings", build: buildSettings },
+  import: { title: "Import from a game", build: buildImport },
 };
+let DRAWER_PANEL = null;
+function openDrawer(panel) {
+  const key = PANELS[panel] ? panel : "settings";
+  DRAWER_PANEL = key;
+  $("#drawer_title").textContent = PANELS[key].title;
+  const body = $("#drawer_body"); body.innerHTML = "";
+  PANELS[key].build(body);
+  $("#drawer").classList.add("open"); $("#drawer").setAttribute("aria-hidden", "false");
+  $("#scrim").classList.add("open");
+}
+function closeDrawer() {
+  DRAWER_PANEL = null;
+  $("#drawer").classList.remove("open"); $("#drawer").setAttribute("aria-hidden", "true");
+  $("#scrim").classList.remove("open");
+}
+$("#drawer_close").onclick = closeDrawer;
+$("#scrim").onclick = closeDrawer;
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
-// ---- import dialog ----------------------------------------
-async function openImport() {
+function section(title, ...kids) { return el("section", {}, [el("h4", { textContent: title }), ...kids]); }
+function fld(labelText, control, hint) {
+  const f = el("div", { class: "fld" }, [el("label", { textContent: labelText }), control]);
+  if (hint) f.append(el("div", { class: "hint", textContent: hint }));
+  return f;
+}
+
+async function refreshProfiles() {
+  const pl = await api("profiles");
+  S.profiles = pl.profiles;
+  if (!S.profiles.includes(S.name)) { S.name = pl.active; await loadProfile(S.name); }
+}
+
+// -- profile actions (shared by the rail + the drawer panel) --
+const PROF = {
+  async activate(n) {
+    await api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: n }) });
+    await loadProfile(n); await refreshProfiles(); renderChrome();
+  },
+  async rename(n, to, after) {
+    if (!to || to === n) return;
+    try {
+      const r = await api("profiles/" + encodeURIComponent(n) + "/rename", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to }) });
+      if (S.name === n) S.name = r.name;
+      await refreshProfiles(); renderChrome();
+    } catch (e) { alert("Rename failed: " + e); if (after) after(); }
+  },
+  async duplicate(n, to) {
+    try { await api("profiles/" + encodeURIComponent(n) + "/duplicate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to }) }); await refreshProfiles(); renderChrome(); }
+    catch (e) { alert("Duplicate failed: " + e); }
+  },
+  async create(name) {
+    await api("profiles/" + encodeURIComponent(name), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    await refreshProfiles(); renderChrome();
+  },
+  async remove(n) {
+    await api("profiles/" + encodeURIComponent(n), { method: "DELETE" });
+    await refreshProfiles(); renderChrome();
+  },
+  async setHome(n) {
+    S.settings.home.profile = n;
+    await api("settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(S.settings) });
+    renderChrome();
+  },
+};
+// an editable name span: click to rename in place
+function nameField(n, cls) {
+  const wrap = el("span", { class: cls || "" });
+  const text = el("span", { textContent: n });
+  text.onclick = () => {
+    const inp = el("input", { value: n });
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = n; inp.blur(); } };
+    inp.onblur = () => PROF.rename(n, inp.value.trim(), () => renderChrome());
+    wrap.replaceChild(inp, text); inp.focus(); inp.select();
+  };
+  wrap.append(text);
+  return wrap;
+}
+// "＋ New profile" that expands to an inline input (no browser prompt)
+function newProfileButton(cls) {
+  const btn = el("button", { class: cls || "ghost", textContent: "＋ New profile" });
+  btn.onclick = () => {
+    const inp = el("input", { placeholder: "profile name", style: "width:100%" });
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = ""; inp.blur(); } };
+    inp.onblur = () => { const v = inp.value.trim(); if (v) PROF.create(v); else renderChrome(); };
+    btn.replaceWith(inp); inp.focus();
+  };
+  return btn;
+}
+
+// -- Profiles drawer panel (full management) --
+function buildProfiles(body) {
+  body.append(el("p", { class: "concept", html:
+    "A <b>profile</b> is a whole deck setup — one per game, plus a launcher. " +
+    "The daemon switches profiles automatically by which game is running, or you pick one here. " +
+    "<b>Pages</b> are layers inside a profile; the round aux buttons flip between them." }));
+
+  const list = el("section", {}, [el("h4", { textContent: "Profiles" })]);
+  for (const n of S.profiles) {
+    const row = el("div", { class: "prow" }, [nameField(n, "pname")]);
+    if (n === S.name) row.append(el("span", { class: "ptag active", textContent: "active" }));
+    if (n === S.settings.home.profile) row.append(el("span", { class: "ptag home", textContent: "home" }));
+    const acts = el("div", { class: "pacts" });
+    const btn = (t, fn, danger) => Object.assign(el("button", { class: "ghost" + (danger ? " danger" : ""), textContent: t }), { onclick: fn });
+    if (n !== S.name) acts.append(btn("use", () => PROF.activate(n)));
+    acts.append(btn("duplicate", () => {
+      const inp = el("input", { value: n + "-copy", style: "width:7rem" });
+      inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = ""; inp.blur(); } };
+      inp.onblur = () => { const v = inp.value.trim(); if (v) PROF.duplicate(n, v); else renderChrome(); };
+      acts.replaceChildren(inp); inp.focus(); inp.select();
+    }));
+    if (n !== S.settings.home.profile) acts.append(btn("set home", () => PROF.setHome(n)));
+    if (n !== S.name && n !== S.settings.home.profile && S.profiles.length > 1)
+      acts.append(btn("delete", () => { if (confirm("Delete profile “" + n + "”?")) PROF.remove(n); }, true));
+    row.append(acts);
+    list.append(row);
+  }
+  list.append(el("div", { style: "margin-top:.6rem" }, [newProfileButton()]));
+  body.append(list);
+
+  if (!RAIL_MQ.matches) { const nav = el("section"); navSection(nav); body.append(nav); }
+
+  body.append(section("Set up from a game",
+    el("p", { class: "hint", textContent: "Read a game's own bindings and label the deck keys bound to the D200x controller in-game." }),
+    Object.assign(el("button", { class: "ghost", textContent: "Import from a game…" }), { onclick: () => openDrawer("import") })));
+}
+
+// -- left rail (desktop): compact profile switcher --
+const RAIL_MQ = window.matchMedia("(min-width: 1080px)");
+function renderRail() {
+  const rail = $("#rail");
+  if (!RAIL_MQ.matches) { rail.hidden = true; return; }
+  rail.hidden = false; rail.innerHTML = "";
+  rail.append(el("h4", { class: "railhead", textContent: "Profiles" }));
+  for (const n of S.profiles) {
+    const row = el("div", { class: "railrow" + (n === S.name ? " on" : "") });
+    if (n === S.name) row.append(nameField(n));
+    else { const s = el("span", { textContent: n }); s.onclick = () => PROF.activate(n); row.append(s); }
+    if (n === S.settings.home.profile) row.append(el("span", { class: "ptag home", textContent: "home" }));
+    rail.append(row);
+  }
+  rail.append(el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:6px" }, [
+    newProfileButton("railnew"),
+    Object.assign(el("button", { class: "ghost", textContent: "Manage profiles…" }), { onclick: () => openDrawer("profiles") }),
+  ]));
+
+  navSection(rail, true);
+}
+RAIL_MQ.addEventListener("change", () => { renderRail(); });
+
+async function saveSettings() {
+  await api("settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(S.settings) });
+}
+const NAV_TARGETS = [AUX_L, AUX_R, ...KEY_ROWS.flat().filter(i => i !== STATUS), STATUS, ...KNOBS];
+const navBinds = () => (S.settings.nav.binds ||= {});
+async function commitNav() {
+  for (const [k, v] of Object.entries(navBinds()))
+    if (!v.tap && !v.hold) delete navBinds()[k];
+  await saveSettings(); renderChrome(); renderDeck();
+  if (S.sel) renderEditor();
+}
+// per-button tap/hold navigation config — used by the rail and the mobile drawer
+function navSection(host, compact) {
+  host.append(el("h4", { class: compact ? "railhead" : "", style: "margin-top:16px", textContent: "Navigation" }));
+  host.append(el("p", { class: "hint", textContent: "Each button can do one thing on a quick tap and another on a long hold. Applies to every profile." }));
+
+  const keys = Object.keys(navBinds()).map(Number).sort((a, b) => a - b);
+  for (const idx of keys) {
+    const cfg = navBinds()[idx];
+    const row = el("div", { class: "navrow" });
+    const rm = el("button", { textContent: "✕", title: "unassign this button" });
+    rm.onclick = () => { delete navBinds()[idx]; commitNav(); };
+    row.append(el("div", { class: "navrow-key" }, [el("b", { textContent: keyName("key", idx, null) }), rm]));
+    for (const slot of ["tap", "hold"]) {
+      const sel = el("select");
+      sel.append(el("option", { value: "", textContent: (slot === "tap" ? "tap (quick press)" : "hold (long press)") + " → —" }));
+      NAV_FNS.forEach(([v, t]) => sel.append(el("option", { value: v, textContent: (slot === "tap" ? "tap → " : "hold → ") + t, selected: cfg[slot] === v })));
+      sel.onchange = () => { if (sel.value) cfg[slot] = sel.value; else delete cfg[slot]; commitNav(); };
+      row.append(sel);
+    }
+    host.append(row);
+  }
+
+  const free = NAV_TARGETS.filter(i => !(i in navBinds()));
+  if (free.length) {
+    const add = el("select");
+    add.append(el("option", { value: "", textContent: "＋ assign a button…" }));
+    free.forEach(i => add.append(el("option", { value: i, textContent: keyName("key", i, null) })));
+    add.onchange = () => { if (add.value) { navBinds()[add.value] = { tap: "home" }; commitNav(); } };
+    host.append(el("div", { style: "margin-top:6px" }, [add]));
+  }
+}
+
+// -- Settings panel --
+function buildSettings(body) {
+  const s = S.settings;
+  const bri = el("input", { type: "range", min: 0, max: 100, value: s.device.brightness ?? 80 });
+  const briV = el("span", { textContent: bri.value });
+  bri.oninput = () => briV.textContent = bri.value;
+  const hb = el("input", { type: "number", step: "0.5", min: "0.5", value: s.device.heartbeat_seconds });
+  const grab = el("input", { type: "checkbox", checked: s.device.grab_keyboard });
+
+  const homeProf = el("select");
+  S.profiles.forEach(n => homeProf.append(el("option", { value: n, textContent: n, selected: n === s.home.profile })));
+  const revert = el("input", { type: "number", step: "1", min: "0", value: s.home.revert_seconds });
+
+  body.append(section("Device",
+    fld("Brightness", el("span", {}, [bri, " ", briV])),
+    fld("Heartbeat", hb, "write interval (s) that keeps the deck awake — don't set to 0"),
+    fld("Grab keyboard", grab, "swallow the deck's built-in keyboard macros")));
+  body.append(section("Switching",
+    el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to this profile from anywhere, then returns to auto-detect after the idle timeout." }),
+    fld("Home profile", homeProf),
+    fld("Return after", revert, "idle seconds before going back to auto-detect (0 = stay)")));
+  body.append(section("Connection",
+    el("p", { class: "hint", html: "API host / port / token: edit <code>settings.yaml</code> and restart the daemon." })));
+
+  const save = el("button", { class: "primary", textContent: "Save settings" });
+  save.onclick = async () => {
+    s.device.brightness = Number(bri.value);
+    s.device.heartbeat_seconds = Number(hb.value);
+    s.device.grab_keyboard = grab.checked;
+    s.home.profile = homeProf.value;
+    s.home.revert_seconds = Number(revert.value);
+    await saveSettings();
+    renderChrome(); renderDeck(); closeDrawer();
+  };
+  body.append(el("div", { style: "margin-top:1rem" }, [save]));
+}
+
+// -- Import panel --
+async function buildImport(body) {
   if (!Object.keys(GAMES).length) GAMES = await api("games").catch(() => ({}));
-  const g = $("#i_game"); g.innerHTML = "";
-  Object.keys(GAMES).forEach(k => g.append(el("option", { value: k, textContent: k.toUpperCase(), selected: true })));
-  $("#i_report").hidden = true;
-  syncImportPath();
-  $("#importDlg").showModal();
-}
-function syncImportPath() {
-  const info = GAMES[$("#i_game").value] || {};
-  $("#i_path").value = info.path || "";
-  $("#i_pathhint").textContent = info.path ? "auto-detected" : "not found — enter the game's install folder";
-}
-$("#i_game").onchange = syncImportPath;
-$("#i_cancel").onclick = () => $("#importDlg").close();
-$("#i_run").onclick = async () => {
-  const body = { game: $("#i_game").value, path: $("#i_path").value || undefined, overwrite: $("#i_over").checked };
-  try {
-    const rep = await api("profiles/" + S.name + "/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const lines = [`labelled ${Object.keys(rep.applied).length} button(s)`];
-    if (Object.keys(rep.skipped).length) lines.push(`\nkept your labels on: ${Object.entries(rep.skipped).map(([n, v]) => `btn ${n} (${v})`).join(", ")}`);
-    if (Object.keys(rep.unmatched).length) lines.push(`\nbound in-game but not on any control:\n` + Object.entries(rep.unmatched).map(([n, v]) => `  btn ${n} = ${v}`).join("\n"));
-    $("#i_report").textContent = lines.join("\n"); $("#i_report").hidden = false;
-    await loadProfile(S.name);
-  } catch (e) { $("#i_report").textContent = "import failed: " + e; $("#i_report").hidden = false; }
-};
+  const game = el("select");
+  Object.keys(GAMES).forEach(k => game.append(el("option", { value: k, textContent: k.toUpperCase() })));
+  const path = el("input", { type: "text", placeholder: "game install folder" });
+  const pathHint = el("div", { class: "hint" });
+  const over = el("input", { type: "checkbox", checked: true });
+  const report = el("div", { class: "report", hidden: true });
+  const syncPath = () => {
+    const info = GAMES[game.value] || {};
+    path.value = info.path || "";
+    pathHint.textContent = info.path ? "auto-detected" : "not found — enter the game's install folder";
+  };
+  game.onchange = syncPath; syncPath();
 
-// ---- icon "style" generator (server-rendered preview) --------
-let IG_ONSAVE = null, IG_BASE = null, IG_TARGET = null, IG_GLYPH = null;
+  body.append(el("p", { class: "concept", html: "Labels the deck keys that are bound to the <b>D200x Button Box</b> controller inside <b>" + S.name + "</b> (the active profile)." }));
+  body.append(fld("Game", game));
+  body.append(fld("Path", path)); body.append(el("div", { class: "fld" }, [el("span"), pathHint]));
+  body.append(fld("Overwrite", over, "replace labels you set by hand too"));
+  body.append(report);
+
+  const run = el("button", { class: "primary", textContent: "Import" });
+  run.onclick = async () => {
+    try {
+      const rep = await api("profiles/" + S.name + "/import", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ game: game.value, path: path.value || undefined, overwrite: over.checked }) });
+      const lines = [`labelled ${Object.keys(rep.applied).length} button(s)`];
+      if (Object.keys(rep.skipped).length) lines.push(`\nkept your labels on: ${Object.entries(rep.skipped).map(([n, v]) => `btn ${n} (${v})`).join(", ")}`);
+      if (Object.keys(rep.unmatched).length) lines.push(`\nbound in-game but not on any control:\n` + Object.entries(rep.unmatched).map(([n, v]) => `  btn ${n} = ${v}`).join("\n"));
+      report.textContent = lines.join("\n"); report.hidden = false;
+      await loadProfile(S.name);
+    } catch (e) { report.textContent = "import failed: " + e; report.hidden = false; }
+  };
+  body.append(el("div", { style: "margin-top:1rem" }, [run]));
+}
+
+// ---- icon "style" editor (server-rendered preview) ----------
+let IG = {};   // { onsave, base, target, glyph, label, frameless }
 const IG_DEFAULTS = { mode: "solid", shape: "circle", fill: "#1b1f26", border: "#4a9eff", fg: "#ffffff", font: "sans" };
 function igStyle() {
   return {
@@ -662,30 +1026,42 @@ function igStyle() {
     border: $("#ig_border").value, fill: $("#ig_fill").value, fg: $("#ig_fg").value,
   };
 }
-function igGlyph() { return IG_GLYPH || (IG_TARGET && IG_TARGET.glyph) || null; }
 function igPreview() {
   const q = new URLSearchParams(igStyle());
-  if (igGlyph()) q.set("glyph", igGlyph());              // preview the actual icon, not "AB"
-  else q.set("text", $("#ig_text").value || (IG_TARGET && IG_TARGET.label) || "AB");
+  if (IG.glyph) q.set("glyph", IG.glyph);
+  else if (IG.label) q.set("label", IG.label);
+  else q.set("text", $("#ig_text").value || (IG.target && IG.target.label) || "AB");
   $("#ig_prev").src = "api/icon-preview?" + q;
-  // fill only matters with a solid frame; font only matters for text
-  $("#ig_fill_fld").style.opacity = $("#ig_mode").value === "ring" ? ".45" : "";
-  $("#ig_fill").disabled = $("#ig_mode").value === "ring";
-  $("#ig_font_fld").style.display = igGlyph() ? "none" : "";
-  $("#ig_fg_lbl").textContent = igGlyph() ? "Icon colour" : "Icon / text";
+  const symbolish = !!(IG.glyph || IG.label);
+  const ring = $("#ig_mode").value === "ring";
+  // a tell-tale has no frame: only its colour applies
+  for (const id of ["ig_mode_fld", "ig_shape_fld", "ig_border_fld", "ig_fill_fld", "ig_sync_fld"])
+    $("#" + id).style.display = IG.frameless ? "none" : "";
+  $("#ig_fill_fld").style.opacity = ring ? ".45" : "";
+  $("#ig_fill").disabled = ring;
+  $("#ig_font_fld").style.display = symbolish ? "none" : "";
+  $("#ig_fg_lbl").textContent = symbolish ? "Icon colour" : "Icon / text";
 }
+// opts: { style, baseline, glyph, label, noText, note, saveLabel, clearLabel }
 function openIconStyle(eff, onSave, title, opts = {}) {
-  IG_TARGET = eff; IG_ONSAVE = onSave; IG_GLYPH = opts.glyph || null;
-  IG_BASE = Object.assign({}, IG_DEFAULTS, opts.baseline || curPage().style || {});
-  const s = Object.assign({}, IG_BASE, eff.icon_style || eff.style || {});
+  IG = {
+    onsave: onSave, target: eff, glyph: opts.glyph || null, label: opts.label || null,
+    base: Object.assign({}, IG_DEFAULTS, opts.baseline || {}),
+    frameless: !!(opts.glyph && TELLTALE_SET.has(opts.glyph)),
+  };
+  const cur = opts.style || eff.icon_style || eff.style || eff || {};
+  const s = Object.assign({}, IG.base, cur);
   $("#ig_title").textContent = title || "Icon style";
   $("#ig_note").textContent = opts.note || "";
   $("#ig_note").style.display = opts.note ? "" : "none";
-  $("#ig_text_fld").style.display = (opts.noText || igGlyph()) ? "none" : "";
+  $("#ig_text_fld").style.display = (opts.noText || IG.glyph || IG.label) ? "none" : "";
   $("#ig_text").value = eff.icon_text || "";
   $("#ig_mode").value = s.mode; $("#ig_shape").value = s.shape; $("#ig_font").value = s.font;
   $("#ig_border").value = s.border; $("#ig_fill").value = s.fill; $("#ig_fg").value = s.fg;
   $("#ig_sync").checked = false;
+  $("#ig_use").textContent = opts.saveLabel || "Use this icon";
+  $("#ig_reset").textContent = opts.clearLabel || "Use page default";
+  $("#ig_reset").style.display = opts.clearLabel === null ? "none" : "";
   igPreview();
   $("#iconGen").showModal();
 }
@@ -695,8 +1071,9 @@ function openPageStyle() {
     if (Object.keys(style).length) pg.style = style; else delete pg.style;
     renderDeck(); touched();
   }, "Default look — page " + (S.page + 1), {
-    noText: true, baseline: IG_DEFAULTS,
-    note: "The frame and colours every auto-generated icon on this page starts from. Any key can still override its own look.",
+    noText: true, baseline: IG_DEFAULTS, style: pg.style || {},
+    saveLabel: "Apply", clearLabel: "Reset to app default",
+    note: "The frame and colours every auto-generated icon on this page starts from. Any key can still override its own look. Dashboard symbols only take the icon colour.",
   });
 }
 ["ig_text", "ig_mode", "ig_shape", "ig_font", "ig_border", "ig_fill", "ig_fg"].forEach(id => {
@@ -706,12 +1083,13 @@ function openPageStyle() {
   };
 });
 $("#ig_sync").onchange = () => { if ($("#ig_sync").checked) { $("#ig_fg").value = $("#ig_border").value; igPreview(); } };
-$("#ig_reset").onclick = () => { IG_ONSAVE({}, ""); $("#iconGen").close(); };
+$("#ig_reset").onclick = () => { IG.onsave({}, ""); $("#iconGen").close(); };
 $("#ig_cancel").onclick = () => $("#iconGen").close();
 $("#ig_use").onclick = () => {
   const st = igStyle(), out = {};
-  for (const k of STYLE_KEYS) if (st[k] !== undefined && st[k] !== IG_BASE[k]) out[k] = st[k];
-  IG_ONSAVE(out, $("#ig_text").value.trim());
+  const keys = IG.frameless ? ["fg"] : STYLE_KEYS;
+  for (const k of keys) if (st[k] !== undefined && st[k] !== IG.base[k]) out[k] = st[k];
+  IG.onsave(out, $("#ig_text").value.trim());
   $("#iconGen").close();
 };
 
@@ -848,10 +1226,9 @@ $("#c_reset").onclick = async () => {
 
 // ---- header wiring -----------------------------------------
 $("#saveBtn").onclick = save;
-$("#settingsBtn").onclick = openSettings;
+$("#settingsBtn").onclick = () => openDrawer("settings");
+$("#profilesBtn").onclick = () => openDrawer("profiles");
 $("#iconsBtn").onclick = () => openCompose();
-$("#importBtn").onclick = openImport;
-$("#pageGear").onclick = openPageStyle;
 $("#listenBtn").onclick = () => {
   S.listening = !S.listening;
   $("#listenBtn").classList.toggle("on", S.listening);
@@ -860,23 +1237,6 @@ $("#listenBtn").onclick = () => {
 $("#profileSel").onchange = async e => {
   await api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: e.target.value }) });
   await loadProfile(e.target.value);
-};
-$("#addPage").onclick = () => {
-  const newPage = { name: "", style: {}, keys: {}, knobs: {} };
-  // 1 -> 2 pages: the aux buttons become page nav (automatic). Move anything
-  // explicitly bound on them onto the new page's first free keys.
-  if (pages().length === 1) {
-    let slot = 0;
-    for (const aux of [AUX_L, AUX_R]) {
-      const b = pages()[0].keys[aux];
-      if (b && !b.role) {
-        while (newPage.keys[slot]) slot++;
-        newPage.keys[slot++] = b;
-        delete pages()[0].keys[aux];
-      }
-    }
-  }
-  pages().push(newPage); S.page = pages().length - 1; render(); touched();
 };
 
 document.addEventListener("keydown", e => {

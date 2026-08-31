@@ -153,7 +153,14 @@ Design first (a plans/ note), then rebuild.
 - **Widgets / telemetry on keys** — `widget:` field + provider system (clock /
   system / mpris / shell now; per-sim telemetry adapters later). Partial LCD
   updates. See plans/icon-system.md.
-- Delete profile / delete page in the UI (API already has delete)
+- **Live key colour from telemetry** — a key's icon colour (and maybe a fill
+  bar) driven by a game value, so the deck "lights up" like a car dashboard
+  (rev/limiter, TC/ABS engaged, low fuel, pit-limiter, DRS). Needs the telemetry
+  provider system above + a `colour_from:` binding on the render path
+  (`render_icon` already takes `fg`; the daemon would re-push affected keys on a
+  throttle). Was requested during the frontend overhaul.
+- Delete profile / delete page in the UI (API already has delete) — DONE in the
+  Profiles drawer + page strip.
 - AC EVO importer (needs a sample of its control-config file — not installed here)
 - Profile export / import (share a setup as a file)
 - "Test" button in the editor — pulse a gamepad button to check it fires

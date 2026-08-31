@@ -265,18 +265,68 @@ sim/box registers, autosave + status pill, `<img>` cache. Dialogs unchanged.
   to phase 4.
 
 **Phase 3 — profiles, pages, drawer.**
-- **Define the two concepts in the UI.** A one-liner where each is managed:
-  *"A **profile** is a full deck setup — one per game, plus a launcher. The
-  daemon switches profiles automatically by which game is running."* /
-  *"**Pages** are layers within a profile; the round aux buttons flip between
-  them."* The "default look" only makes sense once profile/page are legible.
-- `Drawer` component; move Settings / Import / Icon editor into it; delete the
-  `<dialog>`s.
-- `ProfilesPanel`: create / rename / duplicate / delete / set-home / auto-detect
-  chips. New `rename` API endpoint.
-- `PageStrip` under the deck: rename / delete / reorder + the aux-nav note.
-- Settings split into Device / Switching / Connection sections; the
-  `settings.icon.game/.nav` "default look" editors live here with previews.
+- concept text ✅ — the Profiles panel leads with *"A profile is a whole deck
+  setup — one per game, plus a launcher… Pages are layers inside a profile; the
+  round aux buttons flip between them."*; the page strip repeats the aux note.
+- `Drawer` ✅ — one right slide-over (`#drawer` + `#scrim`), Esc / backdrop to
+  close. Hosts Profiles / Settings / Import panels, each built as DOM by
+  `buildProfiles` / `buildSettings` / `buildImport`. The `<dialog>`s for those
+  are gone; the icon editor + symbol picker stay `<dialog>` (nested tools).
+- `ProfilesPanel` ✅ — list with active/home tags; per row use / duplicate /
+  set-home / delete (guarded), inline rename; ＋ New profile (blank or copy).
+  Backend: `config.rename_profile` / `duplicate_profile`,
+  `POST /api/profiles/<n>/{rename,duplicate}`, `POST /api/profiles/<n>` takes
+  `copy_from`. Rename fixes up `settings.active_profile` / `home.profile`.
+- `PageStrip` ✅ — under the deck: click a page to switch, click the active
+  name to rename inline, ✕ to delete (≥1 kept), ＋ page, ⚙ default look, aux
+  note when multi-page. (drag-reorder not done — low value, skipped.)
+- Settings ✅ split into Device / Switching / Connection sections.
+- left rail ✅ — on ≥1080px a sticky left column shows the profile list (click
+  to activate, click the active name to rename, ＋ New profile inline, Manage…
+  opens the full drawer panel); the header profile bar hides. Below 1080px the
+  rail collapses and the header "Manage…" button opens the drawer.
+- polish ✅ — new-profile is an inline input (no browser `prompt`/`confirm`);
+  duplicate name is an inline input; page strip moved *above* the deck;
+  deck bottom row is `aux L · aux R · enc · enc · enc` (matches the hardware);
+  Frame & colour previews a label-keyword-matched icon (was falling back to "AB").
+- brightness ✅ — `settings.yaml` brightness now re-applies to the device on
+  reload, not only on connect (`daemon` run loop).
+- navigation model ✅ — `settings.nav` is now `{binds: {index: {tap, hold}}}`
+  where tap/hold ∈ home / prev_page / next_page (old `nav.prev_key` /
+  `nav.next_key` / `home.key` migrate on load; `home` keeps only `profile` +
+  `revert_seconds`). The rail's Navigation panel edits it per button with an
+  explicit tap / hold dropdown. `_nav_binding` synthesises `{page/profile,
+  hold, role:nav}` from it. New **navigate** action (`{nav: home|prev_page|
+  next_page}`) puts the same functions on a screen key; `_fire` handles it.
+- status strip ✅ — `page.keys[STATUS].status` ∈ clock / load / **off**. The
+  SET_SMALL_WINDOW *mode* byte drives the strip: 1 = clock, 0 = system load
+  (real CPU/RAM % from `/proc` via `daemon._sysload`), **2 = BACKGROUND** — the
+  firmware then shows the status key's own icon (rendered wide, 458×196,
+  `_status_icon`) which the manifest carries with `SmallViewMode: 2`. The
+  heartbeat sends the matching mode every 2 s (also the keep-alive). Recipe
+  found by reading `jcalado/companion-surface-d200` +
+  `Tyaaa-aa/Ulanzi-Deck-Linux`; see `docs/hardware.md`. Deck + editor names are
+  1-based ("Key 6", "Aux left", "Encoder 1") via `keyName` / `labelFor`.
+- more follow-ups ✅ — page/default-look pills moved *below* the deck (deck now
+  top-aligns with the side panels); a **Navigation** section in the rail (and the
+  Profiles drawer on mobile) sets the home / prev-page / next-page buttons —
+  out of Settings; the editor header dropped "sim/box control" for a plain
+  role line ("Controller button 5", "Switches profile → lmu", "Home button",
+  "Unassigned") + the label as the title; the STATUS key has a **Show the
+  clock** toggle (`clock:false` → normal key, `build_manifest` drops
+  `SmallViewMode`); Symbol mode no longer force-opens the picker (adopts the
+  current auto icon, "Choose…" opens it).
+- follow-up fixes ✅ — `actionBlock` re-adds the "bind this button in <game>"
+  row that the phase-1 rewrite dropped (shows for a gamepad action when a
+  writable game is detected); the Frame & colour link now shows for tell-tale
+  symbols too as **Colour** (dialog hides frame/shape/border/fill, leaves Icon
+  colour); the default-look dialog reads the *current* page style (was showing
+  defaults), its buttons read "Apply" / "Reset to app default", and its note
+  says dashboard symbols only take the icon colour.
+- **still open:** `settings.icon.game/.nav` "default look" editors (no UI yet);
+  auto-detect "this profile is for <game>" chips; the phase-2 `More` disclosure;
+  Switching section could move to the rail (user undecided); live key colour
+  from telemetry (roadmap backlog).
 
 **Phase 4 — polish.**
 - Client-side icon rendering (`@font-face` Material + CSS-mask tinted tell-tale

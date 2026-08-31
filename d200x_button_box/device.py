@@ -114,11 +114,29 @@ class Device:
         return bytes(data) or None
 
     def set_brightness(self, percent: int) -> None:
+        self._brightness = int(percent)
         self._write(b"\x00" + protocol.build_brightness(percent))
 
-    def heartbeat(self) -> None:
-        """Keep the deck in host mode. Send every ~2s."""
-        self._write(b"\x00" + protocol.build_small_window(1, time.strftime("%H:%M:%S")))
+    def heartbeat(self, mode: str = "clock", load: tuple[int, int, int] = (0, 0, 0)) -> None:
+        """Watchdog write every ~2s.
+
+        * ``"clock"`` — SET_SMALL_WINDOW mode 1 (the dial clock)
+        * ``"load"``  — SET_SMALL_WINDOW mode 0 (CPU / RAM / GPU readout)
+        * ``"off"``   — a plain SET_BRIGHTNESS re-send; the BACKGROUND mode is set
+          once by :meth:`small_window_background` after each layout push, and the
+          status key then shows its own icon
+        """
+        if mode == "load":
+            pkt = protocol.build_small_window(0, "", *load)
+        elif mode == "off":
+            pkt = protocol.build_brightness(getattr(self, "_brightness", 80))
+        else:
+            pkt = protocol.build_small_window(1, time.strftime("%H:%M:%S"))
+        self._write(b"\x00" + pkt)
+
+    def small_window_background(self) -> None:
+        """Put the wide status strip into BACKGROUND mode (show slot 3_2's icon)."""
+        self._write(b"\x00" + protocol.build_small_window(2, time.strftime("%H:%M:%S")))
 
     def send_init(self, page=None, icon_cfg: dict | None = None,
                   quiet: bool = False, force: bool = False) -> bool:

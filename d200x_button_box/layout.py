@@ -180,15 +180,26 @@ def render_icon(style: dict | None, text: str = "", glyph: str | None = None,
     return buf.getvalue()
 
 
-def _pad_png(png: bytes, size: int) -> bytes:
+def _pad_png(png: bytes, w: int, h: int | None = None) -> bytes:
+    """Centre `png` on a transparent canvas (no scaling)."""
     Image = _pil()[0]
+    h = w if h is None else h
     with Image.open(io.BytesIO(png)) as im:
         im = im.convert("RGBA")
-        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        canvas.paste(im, ((size - im.size[0]) // 2, (size - im.size[1]) // 2), im)
+        canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        canvas.paste(im, ((w - im.size[0]) // 2, (h - im.size[1]) // 2), im)
         buf = io.BytesIO()
         canvas.save(buf, format="PNG")
         return buf.getvalue()
+
+
+# the wide status key ("small window" slot 3_2) is 458 x 196
+STATUS_W, STATUS_H = 458, 196
+
+
+def _status_icon(png: bytes) -> bytes:
+    return _pad_png(png, STATUS_W, STATUS_H)
+
 
 
 def _load_icon_png(path: str) -> bytes | None:
@@ -267,7 +278,7 @@ def build_manifest(icons: dict[int, bytes]) -> tuple[bytes, dict[str, bytes]]:
             view["Icon"] = name
         entry: dict = {"State": 0, "ViewParam": [view]}
         if index == protocol.STATUS_KEY_INDEX:
-            entry["SmallViewMode"] = 2
+            entry["SmallViewMode"] = 2   # the firmware clock / readout overlay
         manifest[_cell(index)] = entry
     return json.dumps(manifest).encode(), files
 
@@ -297,14 +308,20 @@ def build_set_buttons(page=None, icon_cfg: dict | None = None) -> bytes:
     game_base = merge_style(DEFAULT_GAME_STYLE, icon_cfg.get("game"))
     nav_base = merge_style(DEFAULT_NAV_STYLE, icon_cfg.get("nav"))
 
+    status = page.keys.get(protocol.STATUS_KEY_INDEX, {}) if page is not None else {}
+    smode = status.get("status") or ("load" if status.get("clock") is False else "clock")
+
     icons: dict[int, bytes] = {}
     if page is not None:
         for index in _MANIFEST_INDICES:
-            binding = page.keys.get(index, {})
             if index == protocol.STATUS_KEY_INDEX:
-                png = _load_icon_png(binding["icon"]) if binding.get("icon") else None
-            else:
-                png = resolve_key_icon(binding, page.style, game_base, nav_base)
+                # clock / load -> the firmware fills the strip; off -> its own wide icon
+                if smode == "off":
+                    png = resolve_key_icon(status, page.style, game_base, nav_base)
+                    if png:
+                        icons[index] = _status_icon(png)
+                continue
+            png = resolve_key_icon(page.keys.get(index, {}), page.style, game_base, nav_base)
             if png:
                 icons[index] = png
 

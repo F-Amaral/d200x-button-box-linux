@@ -51,17 +51,50 @@ class ApiConfig:
 
 @dataclass
 class HomeConfig:
-    """A 'go home' control that works in every profile."""
-    key: int | None = None           # control index; None = feature off
-    profile: str = "launcher"        # where the home key jumps to
+    """Where the 'home' navigation function jumps to, and when it comes back."""
+    profile: str = "launcher"        # where home jumps to
     revert_seconds: float = 5        # idle seconds before returning to auto-detect; 0 = stay
+
+
+NAV_FNS = ("home", "prev_page", "next_page")
 
 
 @dataclass
 class NavConfig:
-    """The two page-navigation keys (default: the aux buttons)."""
-    prev_key: int | None = 15        # aux L
-    next_key: int | None = 16        # aux R
+    """Per-button navigation. ``binds`` maps a control index to
+    ``{"tap": fn, "hold": fn}`` where fn is one of :data:`NAV_FNS`.
+    Default: the two aux buttons flip pages."""
+    binds: dict = field(default_factory=lambda: {
+        protocol.PAGE_KEY_INDICES[0]: {"tap": "prev_page"},
+        protocol.PAGE_KEY_INDICES[1]: {"tap": "next_page"},
+    })
+
+    @classmethod
+    def from_raw(cls, raw: dict, legacy_home_key: int | None = None) -> "NavConfig":
+        raw = raw or {}
+        if raw.get("binds") is not None:
+            binds: dict = {}
+            for k, v in raw["binds"].items():
+                d = {t: v[t] for t in ("tap", "hold") if (v or {}).get(t) in NAV_FNS}
+                if d:
+                    binds[int(k)] = d
+            return cls(binds=binds)
+        # legacy: nav.prev_key / nav.next_key + home.key
+        pk = raw.get("prev_key", protocol.PAGE_KEY_INDICES[0])
+        nk = raw.get("next_key", protocol.PAGE_KEY_INDICES[1])
+        binds = {}
+        if pk is not None:
+            binds.setdefault(int(pk), {})["tap"] = "prev_page"
+        if nk is not None:
+            binds.setdefault(int(nk), {})["tap"] = "next_page"
+        if legacy_home_key is not None:
+            hk = int(legacy_home_key)
+            slot = "hold" if hk in {pk, nk} else "tap"
+            binds.setdefault(hk, {})[slot] = "home"
+        return cls(binds=binds)
+
+    def to_dict(self) -> dict:
+        return {"binds": {i: dict(v) for i, v in sorted(self.binds.items())}}
 
 
 def default_icon_cfg() -> dict:
@@ -119,9 +152,8 @@ class Settings:
             auto_detect={k: list(v) for k, v in (raw.get("auto_detect") or {}).items()},
             games={k: str(v) for k, v in (raw.get("games") or {}).items()},
             icon=merged_icon,
-            nav=NavConfig(prev_key=nav.get("prev_key", 15), next_key=nav.get("next_key", 16)),
+            nav=NavConfig.from_raw(nav, legacy_home_key=home.get("key")),
             home=HomeConfig(
-                key=home.get("key"),
                 profile=home.get("profile", "launcher"),
                 revert_seconds=float(home.get("revert_seconds", 5)),
             ),
@@ -146,9 +178,8 @@ class Settings:
             "auto_detect": self.auto_detect,
             "games": self.games,
             "icon": self.icon,
-            "nav": {"prev_key": self.nav.prev_key, "next_key": self.nav.next_key},
+            "nav": self.nav.to_dict(),
             "home": {
-                "key": self.home.key,
                 "profile": self.home.profile,
                 "revert_seconds": self.home.revert_seconds,
             },
@@ -268,6 +299,32 @@ def delete_profile(name: str) -> bool:
         path.unlink()
         return True
     return False
+
+
+def rename_profile(old: str, new: str) -> str:
+    """Move a profile's file. Returns the sanitised new name. Raises on collision
+    or a missing source."""
+    src = profile_path(old)
+    if not src.exists():
+        raise FileNotFoundError(old)
+    dst = profile_path(new)
+    if dst == src:
+        return dst.stem
+    if dst.exists():
+        raise FileExistsError(dst.stem)
+    src.rename(dst)
+    return dst.stem
+
+
+def duplicate_profile(src_name: str, new: str) -> str:
+    """Copy a profile to a new name. Returns the sanitised new name."""
+    src = load_profile(src_name)
+    dst = profile_path(new)
+    if dst.exists():
+        raise FileExistsError(dst.stem)
+    src.name = dst.stem
+    save_profile(src)
+    return dst.stem
 
 
 def gc_icons() -> int:
@@ -428,7 +485,12 @@ def bootstrap() -> None:
         s = Settings()
         s.active_profile = "launcher"
         s.auto_detect = {"lmu": ["LeMansUltimate"], "ac_evo": ["AssettoCorsaEVO", "acevo"]}
-        s.home = HomeConfig(key=HOME_KEY_INDEX, profile="launcher", revert_seconds=5)
+        s.home = HomeConfig(profile="launcher", revert_seconds=5)
+        # aux L: tap = prev page, hold = home;  aux R: tap = next page
+        s.nav = NavConfig(binds={
+            protocol.PAGE_KEY_INDICES[0]: {"tap": "prev_page", "hold": "home"},
+            protocol.PAGE_KEY_INDICES[1]: {"tap": "next_page"},
+        })
         try:
             from .gameimport import find_lmu
 

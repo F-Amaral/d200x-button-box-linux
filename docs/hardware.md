@@ -49,6 +49,26 @@ Commands the daemon sends: `0x0001` SET_BUTTONS (a zip: `manifest.json` +
 `Images/*.png`), `0x0006` SET_SMALL_WINDOW (`mode|cpu|mem|HH:MM:SS|gpu`),
 `0x000a` SET_BRIGHTNESS. Device replies with a `0x010b` ack.
 
+### The wide status key ("small window", slot `3_2`, 458×196)
+
+SET_SMALL_WINDOW's first field is a mode that picks what the strip shows:
+
+| mode | shows |
+|--|--|
+| `0` | CPU / RAM / GPU stats |
+| `1` | analogue dial clock |
+| `2` | **BACKGROUND** — the icon set for slot `3_2` in the manifest |
+| `200`–`203` | digital date/time/weekday variants |
+
+The payload is 7 fields: `mode|cpu|mem|HH:MM:SS|gpu|24H|suffix` (older captures
+show only the first five; the D200X seems to want all seven). The mode byte,
+not the manifest, drives the display; the manifest needs `SmallViewMode: 2` on
+`3_2` so the firmware allocates the full 458px width. A custom status icon =
+`SmallViewMode: 2` + a 458×196 Icon on `3_2`, then SET_SMALL_WINDOW mode `2`
+sent **once** (the D200X doesn't run the clock keep-alive; the daemon keeps the
+deck awake with a periodic SET_BRIGHTNESS instead). Learned from
+`jcalado/companion-surface-d200` and `Tyaaa-aa/Ulanzi-Deck-Linux`.
+
 ## Firmware quirks
 
 - **Silent until handshake.** Interface 0 reports nothing until the device
@@ -56,8 +76,9 @@ Commands the daemon sends: `0x0001` SET_BUTTONS (a zip: `manifest.json` +
   to host mode. The daemon sends one on start and on every profile/page change.
 - **Drifts back to standalone.** Without a write every couple of seconds the
   deck shows a colour-circle animation, stops reporting, and may re-enumerate on
-  USB. The daemon's `heartbeat_seconds` (SET_SMALL_WINDOW every 2s) prevents it;
-  it also puts a clock on the wide status key.
+  USB. The daemon sends SET_SMALL_WINDOW every `heartbeat_seconds` — it both
+  keeps the deck in host mode and sets the status strip (mode 1 clock / mode 0
+  load / mode 2 the key's own icon).
 - **Encoder click on release only.** Holding an encoder button sends nothing;
   press+release arrive together when you let go. A knob click can't be a hold —
   the daemon fires it as a `pulse_ms` pulse.
