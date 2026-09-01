@@ -191,15 +191,20 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   (`gamepad.py`) → HardwareKey `GenericUSBController_Button<N>_1209_D200`,
   button N **1:1** with our gamepad button N (confirmed against a test binding:
   CycleLights→btn1, CycleWipers→btn3).
-- **reader DONE** — `gameimport.import_ac_rally()` scans the .sav's FString runs
+- **reader DONE** — `games.ac_rally.read()` scans the .sav's FString runs
   (`<action> <key> "RawInput" "SteeringWheel"`), no GVAS tree parse, no deps.
-  `find_ac_rally()` locates it via `compatdata/{3917090,3919070}/…`. Wired into
-  `_IMPORTERS` / `_FINDERS`, `available_games()` (`can_write: false`), bootstrap
-  path detection, the web import dropdown ("AC Rally"). Tests: 2 in
-  `test_gameimport.py`. Verified end-to-end against the real .sav.
+  `find()` locates it via `compatdata/{3917090,3919070}/…`. In the games
+  registry with `can_read` only. Verified end-to-end against the real .sav.
+- **per-game code split into a `games/` package** — `games/{lmu,ac_rally,
+  ac_evo}.py` each end in `GAME = Game(key, label, detect, find, read?,
+  controls?, write?)`; `games/__init__.py` holds the registry + the dispatch
+  (`available()`, `read()`, `controls()`, `bind()`, `detect_hints()`);
+  `games/steam.py` is the shared library-discovery helper. `gameimport.py` is
+  now just `apply_labels` / `prune_to_buttons` (profile glue). Adding a sim =
+  one file. `/api/games` sends `label` (frontend `gameLabel` reads it).
 - **import flow reworked — builds a profile *for the game***. `POST
   /api/profiles/<name>/import` **creates** `<name>` when missing, then
-  `gameimport.prune_to_buttons()` strips it down to only the buttons the game
+  `gameimport.prune_to_buttons()` strips it to only the buttons the game
   actually binds (a 2-key `ac_rally` profile, not the 25-button starter map).
   Seeds `settings.games` + `auto_detect`, returns `{created, profile, …}`. Web
   panel: no profile → "creates `ac_rally`"; exists → radio "New `ac_rally-2`" /
@@ -214,7 +219,8 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   AC EVO) shows as a tag in the Profiles panel row. The editor's "bind this
   button in &lt;game&gt;" tool keys off the link (falls back to profile name /
   `<game>-N`) and shows only for `can_write` games. `/api/games` gained
-  `can_read`; `find_ac_evo()` added so AC EVO is a linkable (read-only) game.
+  `can_read`; `games.ac_evo` (`find` only, no reader) makes AC EVO a linkable
+  "no import yet" game.
 - **delete the active profile** — no longer blocked; the daemon falls back to
   the home profile (`active_profile` repointed + forced override cleared). Only
   the home profile itself is protected. `DELETE /api/profiles/<n>` returns

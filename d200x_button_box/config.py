@@ -476,9 +476,9 @@ def bootstrap() -> None:
     if not SETTINGS_PATH.exists():
         s = Settings()
         s.active_profile = "launcher"
-        from .gameimport import DETECT_HINTS
+        from . import games
 
-        s.auto_detect = {g: list(v) for g, v in DETECT_HINTS.items()}
+        s.auto_detect = {g: list(v) for g, v in games.detect_hints().items()}
         s.home = HomeConfig(profile="launcher", revert_seconds=5)
         # aux L: tap = prev page, hold = home;  aux R: tap = next page
         s.nav = NavConfig(binds={
@@ -486,12 +486,9 @@ def bootstrap() -> None:
             protocol.PAGE_KEY_INDICES[1]: {"tap": "next_page"},
         })
         try:
-            from . import gameimport
-
-            if (lmu := gameimport.find_lmu()):
-                s.games["lmu"] = lmu
-            if (acr := gameimport.find_ac_rally()):
-                s.games["ac_rally"] = acr
+            for key, info in games.available().items():
+                if info["path"]:
+                    s.games[key] = info["path"]
         except Exception:  # noqa: BLE001
             pass
         s.save()

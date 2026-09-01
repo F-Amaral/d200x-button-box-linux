@@ -185,31 +185,30 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
 
         if seg == ["games"] and method == "GET":
-            from . import gameimport
+            from . import games
 
-            found = gameimport.available_games()
-            merged = {g: {"path": d.settings.games.get(g) or info["path"],
-                          "can_read": info.get("can_read", False),
-                          "can_write": info.get("can_write", False)}
-                      for g, info in found.items()}
-            for g, p in d.settings.games.items():
-                merged.setdefault(g, {"path": p, "can_read": False, "can_write": False})
+            merged = {k: {"path": d.settings.games.get(k) or info["path"],
+                          "label": info["label"],
+                          "can_read": info["can_read"], "can_write": info["can_write"]}
+                      for k, info in games.available().items()}
+            for k, p in d.settings.games.items():
+                merged.setdefault(k, {"path": p, "label": k.upper(), "can_read": False, "can_write": False})
             return self._json(merged)
 
         if len(seg) == 3 and seg[0] == "games" and seg[2] == "controls" and method == "GET":
-            from . import gameimport
+            from . import games
 
             game = seg[1]
-            path = d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
+            path = d.settings.games.get(game) or (games.available().get(game) or {}).get("path")
             if not path:
                 return self._json({"error": f"no install path for {game}"}, 400)
-            return self._json(gameimport.game_controls(game, path))
+            return self._json(games.controls(game, path))
 
         if len(seg) == 3 and seg[0] == "games" and seg[2] == "bind" and method == "POST":
-            from . import gamedetect, gameimport
+            from . import gamedetect, games
 
             game, body = seg[1], self._read_body()
-            path = body.get("path") or d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
+            path = body.get("path") or d.settings.games.get(game) or (games.available().get(game) or {}).get("path")
             if not path:
                 return self._json({"error": f"no install path for {game}"}, 400)
             needles = d.settings.auto_detect.get(game)
@@ -217,32 +216,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"{game} is running -- close it first (it reads its config at startup)"}, 409)
             control = body["control"]
             button = None if body.get("clear") else int(body["button"])
-            return self._json(gameimport.game_bind(game, path, control, button))
+            return self._json(games.bind(game, path, control, button))
 
         if seg == ["profiles"] and method == "GET":
             names = config.list_profiles()
-            games = {}
+            linked = {}
             for n in names:
                 try:
                     g = config.load_profile(n).game
                     if g:
-                        games[n] = g
+                        linked[n] = g
                 except Exception:  # noqa: BLE001
                     pass
-            return self._json({"profiles": names, "active": d.store.active_name, "games": games})
+            return self._json({"profiles": names, "active": d.store.active_name, "games": linked})
 
         if len(seg) == 3 and seg[0] == "profiles" and seg[2] == "import" and method == "POST":
-            from . import gameimport
+            from . import gameimport, games
 
             name, body = seg[1], self._read_body()
             game = body.get("game", "lmu")
-            path = body.get("path") or d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
+            path = body.get("path") or d.settings.games.get(game) or (games.available().get(game) or {}).get("path")
             if not path:
                 return self._json({"error": f"no install path for {game}"}, 400)
             created = name not in config.list_profiles()
             prof = config.default_profile(name) if created else config.load_profile(name)
             report = gameimport.apply_labels(
-                prof, gameimport.import_game(game, path), overwrite=body.get("overwrite", True))
+                prof, games.read(game, path), overwrite=body.get("overwrite", True))
             if created:
                 # a new game profile carries only what the game actually binds
                 keep = {int(b) for b in (*report["applied"], *report["skipped"])}
@@ -252,9 +251,10 @@ class Handler(BaseHTTPRequestHandler):
             if created:
                 s = d.settings
                 s.games.setdefault(game, str(path))
+                hints = games.detect_hints().get(game)
                 # canonical "<game>" profile also gets the auto-detect rule
-                if name == game and game not in s.auto_detect and gameimport.DETECT_HINTS.get(game):
-                    s.auto_detect[name] = list(gameimport.DETECT_HINTS[game])
+                if name == game and game not in s.auto_detect and hints:
+                    s.auto_detect[name] = list(hints)
                 s.save()
             d.request_reload()
             return self._json({**report, "created": created, "profile": name})

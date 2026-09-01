@@ -15,7 +15,7 @@ const ACTION_HINT = {
   page: "switch page in this profile",
 };
 const NAV_FNS = [["home", "Home"], ["prev_page", "Previous page"], ["next_page", "Next page"]];
-const gameLabel = k => ({ lmu: "LMU", ac_evo: "AC EVO", ac_rally: "AC Rally" }[k] || k.toUpperCase());
+const gameLabel = k => GAMES[k]?.label || k.toUpperCase();
 const NAV_FN_LABEL = Object.fromEntries(NAV_FNS);
 const STYLE_KEYS = ["mode", "shape", "fill", "border", "fg", "font"];
 const NAV_BASE = { mode: "ring", shape: "round", fill: "#0d0f13", border: "#7d8794", fg: "#aeb6c2", font: "sans" };
