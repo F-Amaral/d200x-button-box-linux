@@ -60,10 +60,10 @@ startup fills gaps in `generated/` without pruning (a hand-edited PNG survives).
 | DELETE | `/api/compose/<name>` | drop the user override (revert to built-in, or remove entirely) |
 | POST | `/api/compose/preview` | render a spec to a PNG **without saving**; body = `{spec, fg?}`; returns `image/png` |
 
-`GET /api/glyphs` already returns `bases` (all tell-tale names) for the "pick a
-base" list and `composed` for the icons the editor knows about — no separate
-`/api/telltales` route. Base thumbnails: `POST /api/compose/preview` with
-`{spec: {base: <name>, base_scale: 1}}`.
+`GET /api/glyphs` returns `telltales` (all tell-tale names — used for the "pick
+a base" list too) and `composed` for the icons the editor knows about — no
+separate `/api/telltales` route. Base thumbnails: `POST /api/compose/preview`
+with `{spec: {base: <name>, base_scale: 1}}`.
 
 ## UI — the editor panel
 

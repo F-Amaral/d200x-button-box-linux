@@ -386,3 +386,32 @@ dialog h3 { margin: 0 0 var(--sp-4); font-size: var(--fs-md); }
 .pagestrip .ptab .x:hover { color: var(--danger); }
 .pagestrip .addpage { border: 1px dashed var(--line); border-radius: 8px; padding: 4px 10px; font-size: var(--fs-xs); background: transparent; color: var(--text-dim); }
 .pagestrip .auxnote { flex-basis: 100%; text-align: center; font-size: var(--fs-xs); color: var(--text-dim); }
+
+/* ---- phase 4: hints, focus, toast, intro ---------------------- */
+.cell .v.hinttext { color: var(--text-dim); font-style: italic; opacity: .8; }
+.cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cell[draggable="true"] { cursor: grab; }
+.cell.dragging { opacity: .4; }
+.cell.dragover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.cell img { transition: opacity .12s; }
+.cell.sel { transition: box-shadow .12s, border-color .12s; }
+
+#toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 12px);
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--line-2);
+  border-radius: 8px; padding: 8px 16px; font-size: var(--fs-sm); z-index: 60;
+  opacity: 0; pointer-events: none; transition: opacity .16s, transform .16s;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+.introov {
+  position: fixed; inset: 0; z-index: 55; background: #000a;
+  display: flex; align-items: center; justify-content: center; padding: var(--sp-4);
+}
+.introcard {
+  background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--sim);
+  border-radius: 14px; padding: var(--sp-6); max-width: 30rem;
+}
+.introcard h2 { font-size: var(--fs-lg); margin-bottom: var(--sp-2); }
+.introcard p { color: var(--text-dim); margin: 0 0 var(--sp-4); }
+.introacts { display: flex; gap: var(--sp-2); flex-wrap: wrap; }

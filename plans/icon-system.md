@@ -66,29 +66,21 @@ future "combine two symbols / add an arrow" icon.
 ## Style layering (current + planned)
 
     built-in defaults
-      └─ settings.icon.game / settings.icon.nav   (planned: two global baselines)
+      └─ settings.icon.game / settings.icon.nav   (two global baselines — no editor UI yet)
            └─ page.style                          (per-page override, done)
                 └─ binding.icon_style             (per-key override, done)
 
 `binding.glyph` / `binding.icon_text` pick *what* is drawn; the style layers
 pick *how*.
 
-## Auto-rebind when a profile goes multi-page
+## Navigation — DONE
 
-`+ page` on a single-page profile should wire up navigation, not leave the user
-to do it by hand:
-
-1. On every page: `aux_l → {page: prev}`, `aux_r → {page: next}` (auto-glyphed).
-2. Home: if `settings.home.key` is an aux button, move home to a grid key on
-   page 1 (e.g. the wide status key, `{profile: home}` — press = home, it still
-   shows the clock) and clear `settings.home.key`, OR keep it — **open question,
-   see below.**
-3. Any *other* binding that was on aux_l/aux_r moves to the new page's first
-   free grid slots in reading order (key 0, 1, …).
-
-**Resolved:** aux L is `tap → prev page`, `hold → home` (press-and-hold,
-`settings.hold_ms`) once the profile is multi-page; on a single-page profile
-aux L is just `home` on tap. Configurable via `settings.nav` + `settings.home`.
+`settings.nav = {binds: {index: {tap, hold}}}`, tap/hold ∈ home / prev_page /
+next_page. Aux L/R default to prev/next page; add a `hold: home` to either.
+`home` config keeps only `profile` + `revert_seconds`. Legacy `nav.prev_key` /
+`next_key` / `home.key` migrate on load. The `{nav: …}` action puts the same
+three functions on any screen key. `+ page` still relocates anything explicitly
+bound on the aux keys to the new page.
 
 ## Widgets / telemetry (backlog — sketch)
 

@@ -331,9 +331,29 @@ sim/box registers, autosave + status pill, `<img>` cache. Dialogs unchanged.
   Switching section could move to the rail (user undecided); live key colour
   from telemetry (roadmap backlog).
 
-**Phase 4 — polish.**
-- Client-side icon rendering (`@font-face` Material + CSS-mask tinted tell-tale
-  `<img>`), kills the last round-trip.
-- Ctrl-Z undo + toast.
-- First-run overlay + persistent aux/encoder hints.
-- Transitions, keyboard nav, empty states, focus rings.
+**Phase 4 — polish (done).**
+- no-flash deck icons ✅ — one `<img>` per key id kept across re-renders; a
+  changed icon URL only swaps in after the new image has decoded (`deckIcon()`),
+  so an edit no longer blanks the cell. (The full client-side render — reproduce
+  `layout.render_icon`'s style cascade in CSS/canvas — was **not** done: it
+  duplicates the Python and risks the deck preview drifting from the device for
+  a flicker the decode-guard already removes. Revisit only if the round-trip
+  itself becomes a problem.)
+- Ctrl-Z undo + toast ✅ — `UNDO` stack of serialized-profile snapshots, bursts
+  of edits within 600 ms coalesce into one step, `#toast` for "Undone" /
+  "Nothing to undo". Profile edits only (not settings / nav).
+- first-run overlay ✅ — `.introov` card ("This is your deck…" + Import button),
+  shown once, gated on `localStorage["d200x_intro"]` (wrapped in try/catch).
+- persistent hints ✅ — unbound encoders show "turn · click"; an aux button with
+  no nav role shows "round button · set in Navigation".
+- keyboard nav ✅ — deck cells are `tabindex=0`, Enter/Space selects, arrow keys
+  move the selection along the deck order, Esc clears it.
+- focus rings ✅ — `.cell:focus-visible` outline; selected cell + icon swap get
+  short transitions.
+- drag-to-move ✅ — drag a bound LCD key onto another to move its binding there;
+  onto a taken key it swaps. HTML5 DnD, `makeDraggable()`, grid keys only (not
+  the wide status key or the screenless aux buttons). Toast "Moved" / "Swapped".
+- **daemon:** `D200X_NO_DEVICE=1` skips the hardware entirely (headless UI dev on
+  a spare port without fighting the real daemon for the deck).
+- not done: empty-state copy is unchanged (already adequate); no richer
+  transitions.

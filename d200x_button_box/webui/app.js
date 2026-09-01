@@ -29,7 +29,7 @@ let GLYPHS = { telltales: [], material: {}, composed: [] };
 let COMPOSED_NAMES = new Set();
 let TELLTALE_SET = new Set();
 let ICONV = 0;                       // bumped after an icon edit to bust cached previews
-const bumpIcons = () => { ICONV++; ICON_CACHE.clear(); };
+const bumpIcons = () => { ICONV++; };
 
 const api = (p, o = {}) => fetch("api/" + p, o).then(r => {
   if (!r.ok) return r.text().then(t => Promise.reject(t || r.status));
@@ -96,13 +96,63 @@ async function boot() {
   S.bindGame = Object.entries(GAMES).find(([, g]) => g.can_write && g.path)?.[0] || null;
   await loadProfile(S.name);
   connectSSE();
+  maybeIntro();
+}
+function maybeIntro() {
+  let seen;
+  try { seen = localStorage.getItem("d200x_intro"); } catch (e) { seen = "1"; }
+  if (seen) return;
+  const card = el("div", { class: "introcard" }, [
+    el("h2", { textContent: "This is your deck" }),
+    el("p", { textContent: "13 LCD keys, 2 round aux buttons, 3 encoders. Click a control to bind it — or read your bindings straight from a game." }),
+    el("div", { class: "introacts" }, [
+      Object.assign(el("button", { class: "primary", textContent: "Got it" }), {
+        onclick: () => { try { localStorage.setItem("d200x_intro", "1"); } catch (e) {} ov.remove(); },
+      }),
+      Object.assign(el("button", { class: "ghost", textContent: "Import from a game…" }), {
+        onclick: () => { try { localStorage.setItem("d200x_intro", "1"); } catch (e) {} ov.remove(); openDrawer("import"); },
+      }),
+    ]),
+  ]);
+  const ov = el("div", { class: "introov" }, [card]);
+  ov.onclick = e => { if (e.target === ov) { try { localStorage.setItem("d200x_intro", "1"); } catch (e2) {} ov.remove(); } };
+  document.body.append(ov);
 }
 async function loadProfile(name) {
   S.name = name; S.page = 0; S.sel = null; S.dirty = false;
   S.profile = normalize(name, await api("profiles/" + name));
+  DECK_IMG.clear();
+  UNDO = []; UNDO_BASE = JSON.stringify(serialize()); UNDO_AT = 0;
   render();
 }
-function touched() { S.dirty = true; renderStatus(); scheduleSave(); }
+
+// ---- undo (profile edits only) ----------------------------------
+let UNDO = [], UNDO_BASE = null, UNDO_AT = 0;
+function touched() {
+  if (UNDO_BASE !== null) {
+    // coalesce a burst of edits (e.g. typing) into one undo step
+    if (Date.now() - UNDO_AT > 600) { UNDO.push(UNDO_BASE); if (UNDO.length > 50) UNDO.shift(); }
+    UNDO_BASE = JSON.stringify(serialize());
+  }
+  UNDO_AT = Date.now();
+  S.dirty = true; renderStatus(); scheduleSave();
+}
+function undo() {
+  if (!UNDO.length) { toast("Nothing to undo"); return; }
+  const snap = UNDO.pop();
+  S.profile = normalize(S.name, JSON.parse(snap));
+  UNDO_BASE = snap; UNDO_AT = 0;
+  S.sel = null; S.dirty = true;
+  render(); renderStatus(); scheduleSave();
+  toast("Undone");
+}
+let TOAST_T = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(TOAST_T);
+  TOAST_T = setTimeout(() => t.classList.remove("show"), 1800);
+}
 function scheduleSave() { clearTimeout(S.saveT); S.saveT = setTimeout(save, 800); }
 async function save() {
   clearTimeout(S.saveT);
@@ -230,11 +280,19 @@ function addPage() {
 }
 
 // ---- deck ------------------------------------------------------
-const ICON_CACHE = new Map();        // url -> <img>, so an unrelated re-render doesn't reload icons
-function iconImg(url) {
-  let im = ICON_CACHE.get(url);
-  if (!im) { im = el("img", { src: url, alt: "" }); ICON_CACHE.set(url, im); return im; }
-  return im.isConnected ? im.cloneNode() : im;  // same icon on two keys -> clone, no reload
+// One <img> per key id, kept across re-renders. When the icon URL changes the
+// old pixels stay on screen until the new image has decoded — no blank flash.
+const DECK_IMG = new Map();
+function deckIcon(id, url) {
+  let im = DECK_IMG.get(id);
+  if (!im) { im = el("img", { src: url, alt: "" }); im.dataset.src = url; DECK_IMG.set(id, im); return im; }
+  if (im.dataset.src !== url) {
+    im.dataset.src = url;
+    const probe = new Image();
+    probe.onload = () => { if (im.dataset.src === url) im.src = url; };
+    probe.src = url;
+  }
+  return im;
 }
 function labelFor(id) {
   return keyName(KNOBS.includes(id) ? "knob" : "key", id, null);
@@ -319,8 +377,9 @@ function cellFor(id, cls) {
   const explicit = curPage().keys[id];
   const b = explicit || navBindingFor(id) || {};
   const reg = registerOf(b);
-  const c = el("div", { class: `cell reg-${reg} ${cls || ""}` });
+  const c = el("div", { class: `cell reg-${reg} ${cls || ""}`, tabIndex: 0 });
   c.dataset.id = id;
+  c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); c.click(); } };
   if (!explicit && !b.role && id !== STATUS) c.classList.add("empty");
   if (S.sel && S.sel.kind === "key" && S.sel.index === id) c.classList.add("sel");
   const navCfg = S.settings?.nav?.binds?.[id];
@@ -330,17 +389,42 @@ function cellFor(id, cls) {
     c.append(el("div", { class: "lbl", textContent: sMode === "load" ? "▤ system load" : "🕐 clock" }));
   } else if (id === STATUS) {
     let u = previewURL(b);
-    if (u) { u += "&w=458&h=196"; const im = iconImg(u); im.className = "statwide"; c.append(im); }
+    if (u) { u += "&w=458&h=196"; const im = deckIcon(id, u); im.className = "statwide"; c.append(im); }
     else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id) }));
   } else {
     const u = previewURL(b);
-    if (u) c.append(iconImg(u));
+    if (u) { const im = deckIcon(id, u); im.className = ""; c.append(im); }
     else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id), title: b.label || "" }));
   }
-  const v = explicit ? shortVal(b) : (navCfg ? navRoleText(navCfg) : "");
+  let v = explicit ? shortVal(b) : (navCfg ? navRoleText(navCfg) : "");
+  if (!v && (id === AUX_L || id === AUX_R)) v = "round button · set in Navigation";
   if (v) c.append(el("div", { class: "v", textContent: v, title: v }));
   c.onclick = () => selectControl("key", id);
+  if (DRAG_OK(id)) makeDraggable(c, id);
   return c;
+}
+// drag a binding from one LCD key to another (swap if the target is taken)
+const DRAG_OK = id => KEY_ROWS.flat().includes(id) && id !== STATUS;
+function makeDraggable(c, id) {
+  if (curPage().keys[id]) {
+    c.draggable = true;
+    c.ondragstart = e => { e.dataTransfer.setData("text/plain", String(id)); e.dataTransfer.effectAllowed = "move"; c.classList.add("dragging"); };
+    c.ondragend = () => c.classList.remove("dragging");
+  }
+  c.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; c.classList.add("dragover"); };
+  c.ondragleave = () => c.classList.remove("dragover");
+  c.ondrop = e => {
+    e.preventDefault(); c.classList.remove("dragover");
+    const from = Number(e.dataTransfer.getData("text/plain"));
+    if (!Number.isInteger(from) || from === id || !DRAG_OK(from)) return;
+    const k = curPage().keys, a = k[from], b = k[id];
+    if (!a) return;
+    if (b) k[from] = b; else delete k[from];
+    k[id] = a;
+    S.sel = { kind: "key", index: id };
+    render(); touched();
+    toast(b ? "Swapped" : "Moved");
+  };
 }
 function renderDeck() {
   const d = $("#deck"); d.innerHTML = "";
@@ -350,19 +434,25 @@ function renderDeck() {
   d.append(cellFor(AUX_R, "round"));
   for (const k of KNOBS) {
     const kb = curPage().knobs[k] || {};
-    const c = el("div", { class: "cell knob reg-box" });
+    const c = el("div", { class: "cell knob reg-box", tabIndex: 0 });
     c.dataset.id = k;
+    c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); c.click(); } };
     if (S.sel && S.sel.kind === "knob" && S.sel.index === k) c.classList.add("sel");
     if (k === (S.settings?.home?.key)) c.append(el("span", { class: "badge", textContent: "HOME" }));
     c.append(el("div", { class: "lbl", textContent: "⟳ " + labelFor(k) }));
     const parts = ["left", "right", "press"].filter(s => kb[s] && actOf(kb[s]) !== "none")
       .map(s => kb[s].label || (s + " " + shortVal(kb[s])));
-    if (parts.length) c.append(el("div", { class: "v", textContent: parts.join(" · "), title: parts.join(" · ") }));
+    c.append(parts.length
+      ? el("div", { class: "v", textContent: parts.join(" · "), title: parts.join(" · ") })
+      : el("div", { class: "v hinttext", textContent: "turn · click" }));
     c.onclick = () => selectControl("knob", k);
     d.append(c);
   }
 }
-function selectControl(kind, index) { S.sel = { kind, index }; renderDeck(); renderEditor(); }
+function selectControl(kind, index) {
+  S.sel = { kind, index }; renderDeck(); renderEditor();
+  document.querySelector(`.cell[data-id="${index}"]`)?.focus();
+}
 
 // ---- editor: action block ------------------------------------
 function actionBlock(binding, onChange) {
@@ -1237,8 +1327,25 @@ $("#profileSel").onchange = async e => {
   await loadProfile(e.target.value);
 };
 
+// deck order for arrow-key navigation
+const DECK_ORDER = [...KEY_ROWS.flat(), AUX_L, AUX_R, ...KNOBS];
 document.addEventListener("keydown", e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); }
+  const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); undo(); return; }
+  if (typing || $("#drawer").classList.contains("open") || document.querySelector("dialog[open]")) return;
+  if (!S.sel) return;
+  const flat = DECK_ORDER;
+  const cur = flat.indexOf(S.sel.index);
+  if (cur < 0) return;
+  let next = cur;
+  if (e.key === "ArrowRight" || e.key === "ArrowDown") next = Math.min(flat.length - 1, cur + 1);
+  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = Math.max(0, cur - 1);
+  else if (e.key === "Escape") { S.sel = null; renderDeck(); renderEditor(); return; }
+  else return;
+  e.preventDefault();
+  const id = flat[next];
+  selectControl(KNOBS.includes(id) ? "knob" : "key", id);
 });
 window.onbeforeunload = e => { if (S.dirty) { save(); } };
 

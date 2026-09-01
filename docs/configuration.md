@@ -9,7 +9,9 @@ profiles/<name>.yaml     one or more pages of bindings for one context
 
 `d200x-button-box init` creates it with `settings.yaml` and the profiles
 `default`, `lmu`, `ac_evo`, `launcher`. Set `D200X_CONFIG_DIR` to use a
-different location.
+different location. Set `D200X_NO_DEVICE=1` to run the daemon API-only, never
+opening the hardware — for working on the web UI on a spare `api.port` without
+disturbing the real daemon.
 
 The generated profiles use a **stable** control → gamepad-button map, so it's
 safe to re-generate without breaking bindings you already made in a game:

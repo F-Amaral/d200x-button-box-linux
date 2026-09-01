@@ -7,6 +7,7 @@ automatically when a known game process appears.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import signal
 import subprocess
@@ -246,6 +247,8 @@ class Daemon:
 
     # --- device connect / reconnect ------------------------------------
     def _connect_device(self) -> bool:
+        if os.environ.get("D200X_NO_DEVICE"):
+            return False  # headless UI dev — API only, never touch the hardware
         try:
             self.dev = Device()
         except (RuntimeError, DeviceGone, OSError):

@@ -104,11 +104,6 @@ Phase 3 polish (done):
 - unit-tested (flaky-device fake); happy path hardware-verified. Physical
   unplug/replug not yet tested end to end on hardware.
 
-### Phase 4 — native KDE app
-- PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon
-  (start/stop daemon, quick profile switch, open UI). `.desktop` file + autostart.
-- Lazy path: it's a thin shell over the same API, no logic duplicated.
-
 ### Icon system v3 — DONE (see plans/icon-system.md)
 - bundled **Material Icons Round** font (`assets/`, ~400 KB, Apache-2.0);
   `glyphs.py` = 53 curated names + aliases
@@ -118,12 +113,15 @@ Phase 3 polish (done):
   from label keywords (headlight / wiper / fuel / radio / …), text initials fallback
 - `settings.icon.game` (solid circle, accent) vs `settings.icon.nav`
   (ring, rounded-square, neutral) — the "circle = sim, square = box control" language
-- `settings.nav.prev_key` / `next_key` (default aux L / R) drive page navigation
-  with **no explicit binding needed**; explicit bindings still win
-- **press-and-hold**: `hold:` on any binding (tap vs hold, `settings.hold_ms`);
-  aux L = tap → prev page, hold → home when the profile is multi-page
+- **navigation model**: `settings.nav = {binds: {index: {tap, hold}}}`,
+  tap/hold ∈ home / prev_page / next_page (aux L/R default to prev/next);
+  legacy `nav.prev_key` / `next_key` / `home.key` migrate on load. `home` keeps
+  only `profile` + `revert_seconds`. New `{nav: …}` action puts the same
+  functions on a screen key.
+- **press-and-hold**: `hold:` on any binding (tap vs hold, `settings.hold_ms`)
 - `+ page` relocates anything explicitly bound on the aux keys to the new page
-- API: `/api/icon-preview` takes `glyph` / `label`; `/api/glyphs`; `/api/font`
+- API: `/api/icon-preview` takes `glyph` / `label` / `caption` / `w` `h`;
+  `/api/glyphs` → `{telltales, material, composed}`; `/api/font`
 
 - **automotive tell-tales** — ~108 real dashboard symbols (mostly ISO 7000, all
   public domain — RealDash-forum PD pack) bundled as tintable white PNGs in
@@ -139,37 +137,60 @@ Phase 3 polish (done):
   up/down, brake bias, tyre pressure, fog, hazards, cruise, page nav, media.
   Material Icons for the rest.
 
-Icon system v3 — UI still TODO:
-- glyph picker in the key icon dialog
-- settings dialog editors for `icon.game` / `icon.nav`
-- `@font-face` the bundled font in the web UI (currently uses server previews)
+### Frontend overhaul — phases 1–3 DONE (see plans/frontend.md)
+Deck-as-canvas centred layout, docked editor, sim/box registers, autosave +
+status pill; `LookField` (Auto/Symbol/Letters/Image) + `SymbolPicker` +
+`@font-face` Material; `Drawer` replacing every modal; Profiles panel
+(create/rename/duplicate/delete/set-home + `POST /api/profiles/<n>/{rename,
+duplicate}`); page strip (switch/rename/delete/add); left rail on ≥1080px;
+Navigation panel (per-button tap/hold); status strip (clock / system load /
+custom icon via SET_SMALL_WINDOW mode); device-push perf (byte-identical
+SET_BUTTONS skip).
 
-## Next up — frontend rethink
-Redesign `webui/index.html` with the same UI/UX language now on the deck:
-the two registers (sim vs box control), readable-at-a-glance, "less amateur".
-Design first (a plans/ note), then rebuild.
+### Frontend overhaul — phase 4 DONE (see plans/frontend.md §9)
+No-flash deck icons (decode-guarded `<img>` swap — full client-side render
+deliberately skipped), Ctrl-Z undo + toast, first-run overlay, persistent
+encoder/aux hints, deck keyboard nav + focus rings, drag a key's binding onto
+another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
+
+## Next up
+
+### Frontend — still open from phases 2–3
+- `More` disclosure in the editor: fold away per-key style override, `hold:`,
+  bind-in-game
+- **bind-in-game for `key` / `command` actions** (only `gamepad` has it now)
+- `settings.icon.game` / `.nav` "default look" editor — **no UI at all yet**
+- Profiles panel: "auto-activate for &lt;game&gt;" chips (today `auto_detect` is
+  raw-edited in Settings)
+
+### Phase — native KDE app
+- PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon
+  (start/stop daemon, quick profile switch, open UI). `.desktop` + autostart.
+- Thin shell over the same API, no logic duplicated.
 
 ## Backlog
 - **Widgets / telemetry on keys** — `widget:` field + provider system (clock /
   system / mpris / shell now; per-sim telemetry adapters later). Partial LCD
-  updates. See plans/icon-system.md.
-- **Live key colour from telemetry** — a key's icon colour (and maybe a fill
-  bar) driven by a game value, so the deck "lights up" like a car dashboard
-  (rev/limiter, TC/ABS engaged, low fuel, pit-limiter, DRS). Needs the telemetry
-  provider system above + a `colour_from:` binding on the render path
-  (`render_icon` already takes `fg`; the daemon would re-push affected keys on a
-  throttle). Was requested during the frontend overhaul.
-- Delete profile / delete page in the UI (API already has delete) — DONE in the
-  Profiles drawer + page strip.
+  updates (`0x000d`). Nothing built yet. See plans/icon-system.md §widgets.
+- **Live key colour from telemetry** — a key's icon colour / fill bar driven by
+  a game value so the deck "lights up" like a car dashboard (rev/limiter,
+  TC/ABS engaged, low fuel, pit-limiter, DRS). Needs the provider system above +
+  a `colour_from:` binding (`render_icon` already takes `fg`; daemon re-pushes
+  affected keys on a throttle).
+- **compose `text` / `circle` / `rect` layers** — lettered variants of composed
+  icons. Deferred from the icon editor (picker didn't need it).
+- Visual icon editor phase 3–4 — canvas drag for layer anchors; fold the
+  stopgap `<dialog>` into the docked panel. (backend + form done.)
 - AC EVO importer (needs a sample of its control-config file — not installed here)
 - Profile export / import (share a setup as a file)
 - "Test" button in the editor — pulse a gamepad button to check it fires
 - `d200x-button-box` CLI subcommands that hit the API (activate / page / state)
-- Status-key content options (profile name / CPU / — later — live sim telemetry)
 - Idle dim after N minutes
 - Per-key press feedback (flash the key on the deck)
-- `POST /api/preview` — push one icon to the deck live (autosave covers most of it)
 - Install script + README pass (no AUR needed)
 - **Example setups per sim** — ship ready-made profiles for LMU, AC, AC EVO,
   ACC, iRacing (do this last, once everything else is stable)
 - CONTRIBUTING + CHANGELOG
+- Hardware: physical unplug/replug end-to-end test (reconnect code done, only
+  fake-device tested)
+- LMU import "button 24" mapping error the user hit — needs the exact error text
