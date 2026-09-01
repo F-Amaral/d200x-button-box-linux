@@ -141,7 +141,29 @@ def cmd_enum(args) -> int:
 
 
 def cmd_icons(args) -> int:
-    from . import compose
+    from . import compose, config, glyphs
+
+    if args.icons_cmd == "action":
+        if args.glyph is None and not args.clear:
+            cur = glyphs.action_icon_map().get(glyphs._norm(args.label))
+            print(f"{args.label!r} -> {cur or '(auto)'}")
+            return 0
+        glyphs.set_action_icon(args.label, None if args.clear else args.glyph)
+        print(f"{args.label!r} -> {'(auto)' if args.clear else args.glyph}"
+              f"   ({config.CONFIG_DIR / 'action_icons.yaml'})")
+        return 0
+
+    if args.icons_cmd == "new":
+        name = args.name.strip().lower()
+        if compose.effective_spec(name) is not None and not args.force:
+            print(f"{name!r} already exists (use --force to reset it)", file=sys.stderr)
+            return 1
+        seed = {"base": args.base} if args.base else {"layers": []}
+        compose.save_user_spec(name, seed)
+        print(f"created {name!r} -> {config.user_icons_dir() / (name + '.png')}")
+        print("edit it in the web icon editor (Icons button), or in "
+              f"{config.user_icons_dir().parent / 'icons.yaml'}")
+        return 0
 
     if args.icons_cmd == "promote":
         for name in args.names:
@@ -199,8 +221,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("enum", help="list the deck's HID interfaces + perms").set_defaults(func=cmd_enum)
     sub.add_parser("status", help="check the deck is reachable").set_defaults(func=cmd_status)
 
-    ic = sub.add_parser("icons", help="composed-icon maintenance (for repo maintainers)")
+    ic = sub.add_parser("icons", help="composed (parametric) icon maintenance")
     ics = ic.add_subparsers(dest="icons_cmd", required=True)
+    nw = ics.add_parser("new", help="create a blank user composed icon to edit in the web editor")
+    nw.add_argument("name", metavar="NAME", help="new icon name, e.g. turn_left")
+    nw.add_argument("--base", metavar="TELLTALE", help="start from this tell-tale as the base")
+    nw.add_argument("--force", action="store_true", help="overwrite if it exists")
+    ac = ics.add_parser("action", help="default icon for a control label (all keys with that label)")
+    ac.add_argument("label", metavar="LABEL", help='e.g. "Cycle Lights"')
+    ac.add_argument("glyph", nargs="?", help="glyph / composed-icon name (omit to show current)")
+    ac.add_argument("--clear", action="store_true", help="remove the override (back to auto)")
     pr = ics.add_parser("promote", help="bake a tuned icon into the shipped defaults + assets/composed.yaml")
     pr.add_argument("names", nargs="+", metavar="NAME", help="composed-icon name(s), e.g. seat_fore")
     ic.set_defaults(func=cmd_icons)

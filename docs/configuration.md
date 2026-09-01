@@ -165,7 +165,14 @@ arrows / arcs / lines (coords as fractions of the icon square), and
 
 The web UI's **Icons** button (or **customise `<glyph>`** on a key) opens a
 visual editor: pick a base, nudge scale / position, add arrow / arc / line /
-tick layers, live preview. **Save** stores your spec in
+tick layers, live preview. **＋** makes a brand-new icon (seeded from the one
+open); on the CLI, `d200x-button-box icons new <name> [--base <telltale>]`.
+Each layer can take an optional **`color:`** so it draws in a fixed colour
+instead of following the key's icon colour. A **`region`** layer recolours /
+fills part of the symbol clipped to a rect or ellipse — `color:` repaints the
+strokes there, `fill:` floods their enclosed interior and the strokes are drawn
+back on top (base `turn` + a region over the left half = a blue arrow with a
+white centre). **Save** stores your spec in
 `~/.config/d200x-button-box/icons.yaml` and renders it to
 `~/.config/d200x-button-box/generated/<name>.png`, which then shadows the
 bundled default. **Reset to built-in** removes your override.
@@ -191,6 +198,11 @@ current spec for copy/paste.
 `{profile: home}` → house, `{command: …}` → terminal. **Game keys** with a label
 but no glyph get one from keywords — car-control words map to the tell-tales —
 and fall back to the label's initials.
+
+To pin an icon to a control label (used by every key with that label, across
+profiles), use the **set / change** link in the editor's Auto look, or
+`d200x-button-box icons action "Cycle Lights" headlights_auto`
+(`--clear` to undo). Stored in `~/.config/d200x-button-box/action_icons.yaml`.
 
 ## Two style baselines
 
@@ -283,15 +295,19 @@ that in-game control name as its `label`.
 
 ## Bind-to-game (the reverse)
 
-For LMU you can also **write** the game's controller config from the web UI:
-select a key with a `gamepad` binding, pick a control name in the "bind this
-button in LMU" dropdown, apply. It writes `Input[control] = {device, id}` into
-`direct input.json` (backup saved as `.d200x-bak`).
+For a profile linked to a game that supports writing (**LMU**, **AC Rally**),
+the key editor shows a "bind this button in &lt;game&gt;" dropdown under a
+`gamepad` binding — pick a control, apply, and the game's own config is updated
+(a one-time `.d200x-bak` backup is written next to it).
 
-- **Close the game first** — rF2/LMU reads that file at startup. The daemon
-  refuses the write while the game process is running.
-- Bind any one control to the deck inside LMU once before using this, so the
-  game has recorded the device's id.
+- **Close the game first** — both read their config at startup and rewrite it on
+  exit. The daemon refuses the write while the game process is detected running.
+- LMU: writes `Input[control] = {device, id}` in `direct input.json`. Bind any
+  one control to the deck inside LMU once first, so the game has recorded the
+  device GUID.
+- AC Rally: splices the HardwareKey in the active key profile inside
+  `EnhancedInputUserSettings.sav` (a UE5 GVAS save). Binding a button to a
+  control also clears whatever else was on that button.
 
 ## The home button
 

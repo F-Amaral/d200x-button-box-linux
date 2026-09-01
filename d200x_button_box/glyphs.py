@@ -12,6 +12,7 @@ name lists come straight from `telltales.names()` + `NAME_TO_CP`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 FONT_PATH = Path(__file__).parent / "assets" / "MaterialIconsRound-Regular.otf"
@@ -126,6 +127,7 @@ _LABEL_HINTS = [
     ("tyre pressure", "tyre_pressure"), ("tire pressure", "tyre_pressure"),
     ("tyre temp", "tyre"), ("tyre", "tyre"), ("tire", "tyre"),
     ("traction control", "tc"), ("traction", "tc"), ("tc ", "tc"), ("tc+", "tc"), ("tc-", "tc"),
+    ("respawn", "refresh"), ("reset car", "refresh"),   # before "esp" (subset of "r-esp-awn")
     ("stability", "esp"), ("esp off", "esp_off"), ("esp", "esp"),
     # transmission / steering / drive
     ("gearbox", "gearbox"), ("transmission", "gearbox"), ("shift up", "shift_up"),
@@ -154,7 +156,7 @@ _LABEL_HINTS = [
     ("gear up", "shift_up"), ("gear down", "shift_down"), ("gear r", "gearbox"),
     ("start stop engine", "engine_start"), ("start engine", "engine_start"),
     ("cycle camera", "eye"), ("camera", "eye"),
-    ("respawn", "refresh"), ("reset car", "refresh"), ("recover", "refresh"),
+    ("recover", "refresh"),
     ("increase tc", "tc"), ("decrease tc", "tc"),
     ("increase abs", "abs"), ("decrease abs", "abs"),
     ("left indicator", "turn"), ("right indicator", "turn"),
@@ -170,7 +172,53 @@ _LABEL_HINTS = [
 ]
 
 
+# --- user overrides: exact "<label>" -> glyph, in CONFIG_DIR/action_icons.yaml ---
+def _norm(label: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", "", (label or "").lower()).strip()
+
+
+_UA: dict = {"mtime": -1.0, "map": {}}
+
+
+def _ua_path():
+    from .config import CONFIG_DIR
+    return CONFIG_DIR / "action_icons.yaml"
+
+
+def action_icon_map() -> dict[str, str]:
+    """{normalised label -> glyph name} from the user's action_icons.yaml."""
+    p = _ua_path()
+    try:
+        m = p.stat().st_mtime
+    except OSError:
+        _UA.update(mtime=-1.0, map={})
+        return {}
+    if m != _UA["mtime"]:
+        import yaml
+        raw = yaml.safe_load(p.read_text()) if p.is_file() else {}
+        _UA["map"] = {_norm(k): str(v) for k, v in (raw or {}).items() if v}
+        _UA["mtime"] = m
+    return _UA["map"]
+
+
+def set_action_icon(label: str, glyph: str | None) -> None:
+    import yaml
+    p = _ua_path()
+    data = (yaml.safe_load(p.read_text()) if p.is_file() else {}) or {}
+    key = _norm(label)
+    if glyph:
+        data[key] = glyph
+    else:
+        data.pop(key, None)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(data, sort_keys=True))
+    _UA["mtime"] = -1.0   # bust cache
+
+
 def label_glyph(label: str) -> str | None:
+    n = _norm(label)
+    if n in action_icon_map():
+        return action_icon_map()[n]
     s = (label or "").lower()
     for needle, glyph in _LABEL_HINTS:
         if needle in s:

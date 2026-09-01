@@ -39,6 +39,8 @@ function gameCap(g) {
   return info.can_write ? "read + write" : info.can_read ? "import only" : "no import yet";
 }
 let GAMES = {}, GAME_CONTROLS = {};
+let ACTION_ICONS = {};   // normalised label -> default glyph (server: action_icons.yaml)
+const normLabel = s => (s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").trim();
 let GLYPHS = { telltales: [], material: {}, composed: [] };
 let COMPOSED_NAMES = new Set();
 let TELLTALE_SET = new Set();
@@ -115,6 +117,7 @@ async function boot() {
   S.settings = await api("settings");
   GAMES = await api("games").catch(() => ({}));
   GLYPHS = await api("glyphs").catch(() => GLYPHS);
+  ACTION_ICONS = await api("action-icons").catch(() => ({}));
   COMPOSED_NAMES = new Set(GLYPHS.composed || []);
   TELLTALE_SET = new Set(GLYPHS.telltales || []);
   await loadProfile(S.name);
@@ -499,47 +502,80 @@ function selectControl(kind, index) {
   document.querySelector(`.cell[data-id="${index}"]`)?.focus();
 }
 
+// the deck sends a fixed gamepad button per key/knob-slot (the stable map in
+// config.default_profile) — every key its own number, so nothing collides.
+function canonicalButton(sel, sub) {
+  if (!sel) return 1;
+  if (sel.kind === "knob") return 17 + KNOBS.indexOf(sel.index) * 3 + { left: 0, right: 1, press: 2 }[sub || "left"];
+  if (sel.index === STATUS) return 14;
+  return sel.index + 1;   // LCD keys 0..12 -> buttons 1..13
+}
+
 // ---- editor: action block ------------------------------------
-function actionBlock(binding, onChange) {
+// defBtn = the canonical gamepad button for this control's deck slot
+function actionBlock(binding, onChange, defBtn = 1) {
   const wrap = el("div");
   const sel = el("select");
   ACTIONS.forEach(a => sel.append(el("option", { value: a, textContent: ACTION_LABEL[a] || a, selected: a === actOf(binding) })));
   const valFld = el("div", { class: "fld" });
+  let showNum = (Number(binding.gamepad) || defBtn) !== defBtn;   // advanced override open?
   const rebuild = () => {
     valFld.innerHTML = "";
     const a = sel.value;
     if (a === "none") return;
+    if (a === "gamepad") {
+      if (!binding.gamepad) binding.gamepad = defBtn;
+      const cur = Number(binding.gamepad) || defBtn;
+      valFld.append(el("label", { textContent: "button" }));
+      const line = el("div", { class: "iconrow" });
+      if (showNum) {
+        const inp = el("input", { type: "number", min: 1, value: cur, style: "width:5rem" });
+        inp.oninput = () => { binding.gamepad = Number(inp.value) || defBtn; onChange(); };
+        line.append(inp, linkBtn2("use button " + defBtn, () => { binding.gamepad = defBtn; showNum = false; rebuild(); onChange(); }));
+      } else {
+        binding.gamepad = defBtn;
+        line.append(el("b", { textContent: "controller button " + defBtn }),
+          linkBtn2("override", () => { showNum = true; rebuild(); }));
+      }
+      valFld.append(line);
+      valFld.append(el("div", { class: "hint", style: "grid-column:2", textContent: (cur !== defBtn)
+        ? "overrides the button this deck key normally sends" : "the button this deck key sends — the game binds it" }));
+      const m = el("input", { type: "checkbox", checked: !!binding.momentary });
+      m.onchange = () => { binding.momentary = m.checked || undefined; onChange(); };
+      valFld.append(el("span"), el("label", { style: "display:flex;gap:.4rem;align-items:center" }, [m, "pulse (tap, not hold)"]));
+      const pg = profileGame();
+      if (pg && GAMES[pg]?.can_write) valFld.append(gameBindRow(pg, binding, onChange));
+      return;
+    }
     let input;
-    if (a === "gamepad") input = el("input", { type: "number", min: 1, value: binding.gamepad || 1 });
-    else if (a === "nav") { input = el("select"); NAV_FNS.forEach(([v, t]) => input.append(el("option", { value: v, textContent: t, selected: v === (binding.nav || "home") }))); }
+    if (a === "nav") { input = el("select"); NAV_FNS.forEach(([v, t]) => input.append(el("option", { value: v, textContent: t, selected: v === (binding.nav || "home") }))); }
     else if (a === "profile") { input = el("select"); [...S.profiles, "auto", "next", "prev", "home"].forEach(o => input.append(el("option", { value: o, textContent: o, selected: o === binding.profile }))); }
     else if (a === "page") { input = el("select"); ["next", "prev", "0", "1", "2", "3", "4"].forEach(o => input.append(el("option", { value: o, textContent: o, selected: String(binding.page) === o }))); }
     else input = el("input", { type: "text", value: binding[a] || "", placeholder: a === "key" ? "F13" : "e.g. sh -c 'crew-chief …'" });
     if (a === "nav" && !binding.nav) binding.nav = input.value;   // seed the default
     input.oninput = input.onchange = () => { setAct(binding, a, input.value); onChange(); };
     valFld.append(el("label", { textContent: "value" }), input);
-    if (a === "gamepad") {
-      const m = el("input", { type: "checkbox", checked: !!binding.momentary });
-      m.onchange = () => { binding.momentary = m.checked || undefined; onChange(); };
-      valFld.append(el("span"), el("label", { style: "display:flex;gap:.4rem;align-items:center" }, [m, "pulse (tap, not hold)"]));
-    }
     if (ACTION_HINT[a]) valFld.append(el("div", { class: "hint", textContent: ACTION_HINT[a] }));
-    const pg = profileGame();
-    if (a === "gamepad" && pg && GAMES[pg]?.can_write)
-      valFld.append(gameBindRow(pg, Number(binding.gamepad) || 1));
   };
-  sel.onchange = () => { setAct(binding, sel.value, sel.value === "gamepad" ? 1 : ""); rebuild(); onChange(); };
+  sel.onchange = () => { setAct(binding, sel.value, sel.value === "gamepad" ? defBtn : ""); rebuild(); onChange(); };
   rebuild();
   wrap.append(el("div", { class: "fld" }, [el("label", { textContent: "action" }), sel]), valFld);
   return wrap;
 }
+const linkBtn2 = (text, onclick) => Object.assign(el("button", { class: "ghost", textContent: text, style: "font-size:var(--fs-xs);padding:2px 6px" }), { onclick });
 
 // "bind this button in <game>" — writes the game's own controller config
 async function ensureControls(game) {
-  if (!(game in GAME_CONTROLS)) GAME_CONTROLS[game] = await api("games/" + game + "/controls").catch(() => null);
+  if (!(game in GAME_CONTROLS)) {
+    try { GAME_CONTROLS[game] = await api("games/" + game + "/controls"); }
+    catch (e) { return null; }   // don't cache a transient failure
+  }
   return GAME_CONTROLS[game];
 }
-function gameBindRow(game, button) {
+// CamelCase in-game action names -> readable ("ToggleLeftIndicator" -> "Toggle Left Indicator")
+const niceControl = c => c.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+function gameBindRow(game, binding, onChange) {
+  const button = Number(binding.gamepad) || 1;
   const wrap = el("div"); wrap.style.gridColumn = "1 / -1";
   const head = el("div", { class: "hint", style: "margin-top:.4rem", textContent: "bind this button in " + gameLabel(game) + " (game must be closed):" });
   const box = el("div", { style: "display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-top:.2rem" });
@@ -553,7 +589,7 @@ function gameBindRow(game, button) {
     if (!info.device_present) { sel.append(el("option", { textContent: "— bind any control to the deck in-game once first —" })); go.disabled = true; return; }
     sel.append(el("option", { value: "", textContent: "— not bound —" }));
     const cur = Object.entries(info.bound).find(([, b]) => b === button)?.[0] || "";
-    info.controls.forEach(c => sel.append(el("option", { value: c, textContent: c, selected: c === cur })));
+    info.controls.forEach(c => sel.append(el("option", { value: c, textContent: niceControl(c), selected: c === cur })));
   });
   go.onclick = async () => {
     const info = GAME_CONTROLS[game] || { bound: {} };
@@ -563,7 +599,11 @@ function gameBindRow(game, button) {
     try {
       if (prev && prev !== next) await api("games/" + game + "/bind", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ control: prev, clear: true }) });
       if (next) await api("games/" + game + "/bind", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ control: next, button }) });
-      GAME_CONTROLS[game] = undefined; msg.textContent = "saved"; msg.style.color = "var(--ok)";
+      delete GAME_CONTROLS[game];                       // force a refetch
+      if (next && !binding.label) binding.label = niceControl(next);   // close the loop: label the deck key
+      msg.textContent = "saved"; msg.style.color = "var(--ok)";
+      renderDeck(); touched();
+      if (S.sel) renderEditor();                        // refresh the dropdown / icon
     } catch (e) { msg.textContent = String(e).slice(0, 80); msg.style.color = "var(--danger)"; }
   };
   return wrap;
@@ -654,6 +694,20 @@ function lookField(kb, index) {
       const g = derivedGlyph(kb);
       if (COMPOSED_NAMES.has(g))
         body.append(el("div", { class: "iconrow" }, [linkBtn("customise " + g, () => openCompose(g))]));
+      // per-label default: pick the icon for every key labelled the same
+      if (!g && kb.label) {
+        const nl = normLabel(kb.label), cur = ACTION_ICONS[nl];
+        const row = el("div", { class: "iconrow" });
+        const put = async name => {
+          await api("action-icons", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: kb.label, glyph: name || null }) });
+          if (name) ACTION_ICONS[nl] = name; else delete ACTION_ICONS[nl];
+          bumpIcons(); paint(); commit();
+        };
+        row.append(el("span", { class: "hint", textContent: cur ? `every “${kb.label}” → ${cur}` : `default icon for “${kb.label}”` }));
+        row.append(linkBtn(cur ? "change" : "set", () => openSymbolPicker(cur, put)));
+        if (cur) row.append(linkBtn("clear", () => put(null)));
+        body.append(row);
+      }
     } else if (mode === "letters") {
       const t = el("input", { type: "text", maxLength: 4, value: kb.icon_text || "", placeholder: "1–4 letters" });
       t.oninput = () => { kb.icon_text = t.value.trim() || undefined; commit(); };
@@ -688,6 +742,7 @@ function lookField(kb, index) {
     kb.label = lab.value || undefined;
     const h = document.querySelector("#editor h2");   // keep the title in sync without losing focus
     if (h) h.textContent = keyName("key", index, kb);
+    if (mode === "auto") paint();   // refresh the auto "set default" link (lab is outside body)
     commit();
   };
   paint();
@@ -709,7 +764,7 @@ function holdBlock(kb) {
   more.append(el("label", { class: "inlinechk" }, [chk, `Different action on a long press (${ms} ms)`]));
   if (has) {
     const g = el("div", { class: "grp" }, [el("h3", { textContent: "On long press" })]);
-    g.append(actionBlock(kb.hold, () => { renderDeck(); touched(); }));
+    g.append(actionBlock(kb.hold, () => { renderDeck(); touched(); }, canonicalButton(S.sel)));
     more.append(g);
   }
   return more;
@@ -843,7 +898,7 @@ function renderEditor() {
   if (kind === "key") {
     const kb = keyB(index);
     const g1 = el("div", { class: "grp" }, [el("h3", { textContent: "Action" })]);
-    g1.append(actionBlock(kb, () => { syncHeader(kb); renderDeck(); touched(); }));
+    g1.append(actionBlock(kb, () => { syncHeader(kb); renderDeck(); touched(); }, canonicalButton(S.sel)));
     e.append(g1);
 
     if (index === AUX_L || index === AUX_R) {
@@ -883,7 +938,7 @@ function renderEditor() {
     for (const sub of ["left", "right", "press"]) {
       const box = el("div", { class: "knobsub" }, [el("b", { textContent: sub === "press" ? "click" : "turn " + sub })]);
       const sb = knobB(index, sub);
-      box.append(actionBlock(sb, () => { renderDeck(); touched(); }));
+      box.append(actionBlock(sb, () => { renderDeck(); touched(); }, canonicalButton(S.sel, sub)));
       const lab = el("input", { type: "text", value: sb.label || "", placeholder: "note (editor only)" });
       lab.oninput = () => { sb.label = lab.value || undefined; renderDeck(); touched(); };
       box.append(el("div", { class: "fld" }, [el("label", { textContent: "note" }), lab]));
@@ -1361,16 +1416,18 @@ $("#ig_use").onclick = () => {
 // ---- icon editor (parametric composed icons) ---------------
 const C = { all: null, name: null, spec: null, t: null, url: null, openLayer: -1 };
 const C_FIELDS = {
-  arrow: [["at", "vec"], ["dir", "dir"], ["len", "n"], ["head", "n"], ["w", "n"]],
-  arc: [["at", "vec"], ["r", "n"], ["deg", "deg"], ["arrow", "end"], ["w", "n"], ["head", "n"]],
-  line: [["from", "vec"], ["to", "vec"], ["w", "n"]],
-  tick: [["at", "vec"], ["dir", "dir"], ["len", "n"], ["w", "n"]],
+  arrow: [["at", "vec"], ["dir", "dir"], ["len", "n"], ["head", "n"], ["w", "n"], ["color", "col"]],
+  arc: [["at", "vec"], ["r", "n"], ["deg", "deg"], ["arrow", "end"], ["w", "n"], ["head", "n"], ["color", "col"]],
+  line: [["from", "vec"], ["to", "vec"], ["w", "n"], ["color", "col"]],
+  tick: [["at", "vec"], ["dir", "dir"], ["len", "n"], ["w", "n"], ["color", "col"]],
+  region: [["at", "vec"], ["size", "vec"], ["shape", "shape"], ["color", "col"], ["fill", "col"]],
 };
 const C_NEW = {
   arrow: { type: "arrow", at: [0.5, 0.5], dir: "up", len: 0.3, head: 0.12, w: 0.05 },
   arc: { type: "arc", at: [0.5, 0.5], r: 0.16, deg: [0, 270], arrow: "end", w: 0.04, head: 0.07 },
   line: { type: "line", from: [0.1, 0.9], to: [0.9, 0.9], w: 0.045 },
   tick: { type: "tick", at: [0.4, 0.5], dir: "up", len: 0.06, w: 0.035 },
+  region: { type: "region", at: [0.25, 0.5], size: [0.5, 1], shape: "rect", color: "#4a9eff" },
 };
 async function openCompose(pick) {
   C.all = await api("compose");
@@ -1453,6 +1510,17 @@ function cField(ly, key, kind) {
     sel.value = ly.arrow || "none";
     sel.onchange = () => { if (sel.value === "none") delete ly.arrow; else ly.arrow = sel.value; cPreview(); };
     w.append(sel);
+  } else if (kind === "col") {
+    const on = el("input", { type: "checkbox", checked: !!ly[key] });
+    const pick = el("input", { type: "color", value: ly[key] || (key === "fill" ? "#ffffff" : "#4a9eff"), disabled: !ly[key] });
+    on.onchange = () => { if (on.checked) ly[key] = pick.value; else delete ly[key]; pick.disabled = !on.checked; cPreview(); };
+    pick.oninput = () => { ly[key] = pick.value; cPreview(); };
+    w.append(on, pick, el("span", { class: "hint", textContent: key === "fill" ? "fill the enclosed interior" : "own colour (else follows the icon)" }));
+  } else if (kind === "shape") {
+    const sel = el("select", {}, ["rect", "ellipse"].map(o => el("option", { value: o, textContent: o })));
+    sel.value = ly.shape || "rect";
+    sel.onchange = () => { ly.shape = sel.value; cPreview(); };
+    w.append(sel);
   } else {
     w.append(num(() => ly[key] ?? 0.1, v => ly[key] = v));
   }
@@ -1470,12 +1538,25 @@ document.querySelectorAll("#composeDlg [data-add]").forEach(btn => btn.onclick =
   cLayers(); cPreview();
 });
 $("#c_copy").onclick = ev => { ev.preventDefault(); navigator.clipboard?.writeText($("#c_json").value); };
+$("#c_new").onclick = ev => {
+  ev.preventDefault();
+  const name = (prompt("Name for the new icon (e.g. turn_left):") || "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  if (!name) return;
+  if (C.all[name]) { cLoad(name); return; }
+  // seed from the current icon so you can tweak a copy, then rename
+  C.all[name] = { spec: JSON.parse(JSON.stringify(C.spec || {})), builtin: false, customised: false };
+  $("#c_name").append(el("option", { value: name, textContent: name }));
+  cLoad(name);
+};
 $("#c_cancel").onclick = () => $("#composeDlg").close();
 $("#c_save").onclick = async () => {
   try {
     await api("compose/" + encodeURIComponent(C.name), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ spec: C.spec }) });
     C.all[C.name] = { spec: JSON.parse(JSON.stringify(C.spec)), builtin: (C.all[C.name] || {}).builtin !== false, customised: true };
     for (const o of $("#c_name").options) if (o.value === C.name && !o.textContent.endsWith("✓")) o.textContent = C.name + "  ✓";
+    // make it immediately pickable (frameless, like a tell-tale)
+    if (!COMPOSED_NAMES.has(C.name)) { COMPOSED_NAMES.add(C.name); (GLYPHS.composed ||= []).push(C.name); }
+    if (!TELLTALE_SET.has(C.name)) { TELLTALE_SET.add(C.name); (GLYPHS.telltales ||= []).push(C.name); }
     cState(); bumpIcons(); renderDeck();
   } catch (e) { alert("Save failed: " + e); }
 };

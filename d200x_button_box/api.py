@@ -332,6 +332,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._raw(layout.render_icon(
                 style, q.get("text") or q.get("label", ""), glyph, q.get("caption", ""), size), "image/png")
 
+        if seg == ["action-icons"]:
+            from . import glyphs
+
+            if method == "GET":
+                return self._json(glyphs.action_icon_map())
+            if method == "PUT":
+                body = self._read_body()
+                glyphs.set_action_icon(body["label"], body.get("glyph") or None)
+                d.request_repush()
+                return self._json({"ok": True})
+
         if seg == ["glyphs"] and method == "GET":
             from . import compose, glyphs, telltales
 

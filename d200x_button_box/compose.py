@@ -29,6 +29,8 @@ square (0..1):
     }
 
 `dir` is "up"/"down"/"left"/"right" or a number of degrees (0 = right, clockwise).
+Any layer may add `"color": "#4a9eff"` to draw itself in a fixed colour instead
+of following the key's icon colour (e.g. tint one arrow of `turn` blue).
 """
 
 from __future__ import annotations
@@ -230,6 +232,48 @@ def _tick(draw, S, at, ang, length, w, fg):
     draw.line([x, y, x + ux * length * S, y + uy * length * S], fill=fg, width=max(2, round(w * S)))
 
 
+def _region(img, S, ly, fg):
+    """Recolour / fill part of the composited image, clipped to a rect or
+    ellipse.  `fill` floods the symbol's *enclosed* interior (grown a couple of
+    pixels so it meets the outline with no gap), keeping the original outline;
+    `color` then repaints the outline in that colour, preserving its edges."""
+    from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter
+
+    cx, cy = ly.get("at", [0.5, 0.5])
+    w, h = ly.get("size", [0.5, 1.0])
+    x0, y0 = max(0, round((cx - w / 2) * S)), max(0, round((cy - h / 2) * S))
+    x1, y1 = min(S, round((cx + w / 2) * S)), min(S, round((cy + h / 2) * S))
+    if x1 <= x0 or y1 <= y0:
+        return
+    rw, rh = x1 - x0, y1 - y0
+
+    shape = Image.new("L", (rw, rh), 0)
+    sd = ImageDraw.Draw(shape)
+    (sd.ellipse if ly.get("shape") == "ellipse" else sd.rectangle)([0, 0, rw - 1, rh - 1], fill=255)
+
+    crop = img.crop((x0, y0, x1, y1))
+    a = crop.getchannel("A")
+    out = crop.convert("RGBA")
+
+    if ly.get("fill"):
+        OUT = 128
+        reach = a.point(lambda v: 255 if v <= 24 else 0)         # clearly transparent
+        for c in ((0, 0), (rw - 1, 0), (0, rh - 1), (rw - 1, rh - 1)):
+            if reach.getpixel(c) == 255:
+                ImageDraw.floodfill(reach, c, OUT)               # flood in from the edge
+        hollow = reach.point(lambda v: 255 if v == 255 else 0)   # only the enclosed transparent
+        hollow = hollow.filter(ImageFilter.MaxFilter(5))         # grow under the outline's inner edge
+        m = ImageChops.multiply(hollow, shape)
+        out = Image.composite(Image.new("RGBA", (rw, rh), ImageColor.getrgb(ly["fill"]) + (255,)), out, m)
+
+    if ly.get("color"):
+        tint = Image.new("RGBA", (rw, rh), ImageColor.getrgb(ly["color"]) + (0,))
+        tint.putalpha(ImageChops.multiply(a, shape))             # keep the outline's own edges/AA
+        out.alpha_composite(tint)
+
+    img.paste(out, (x0, y0))
+
+
 def render(spec: dict | str, colour: str, size: int = 256) -> bytes:
     """Render a spec (or a built-in name) to an RGBA PNG.
 
@@ -260,17 +304,22 @@ def render(spec: dict | str, colour: str, size: int = 256) -> bytes:
     d = ImageDraw.Draw(img)
     for ly in spec.get("layers", []):
         t = ly.get("type")
+        # a layer can force its own colour (e.g. tint one arrow to mark left/right);
+        # otherwise it follows the key's icon colour like the base
+        lc = (ImageColor.getrgb(ly["color"]) + (255,)) if ly.get("color") else fg
         if t == "arrow":
             _arrow(d, S, ly["at"], _angle(ly.get("dir", 0)),
-                   ly.get("len", 0.3), ly.get("head", 0.12), ly.get("w", 0.05), fg)
+                   ly.get("len", 0.3), ly.get("head", 0.12), ly.get("w", 0.05), lc)
         elif t == "arc":
             _arc(d, S, ly["at"], ly["r"], ly.get("deg", [0, 360]),
-                 ly.get("w", 0.05), fg, ly.get("arrow"),
+                 ly.get("w", 0.05), lc, ly.get("arrow"),
                  head=(ly["head"] * S if "head" in ly else None))
         elif t == "line":
-            _line(d, S, ly["from"], ly["to"], ly.get("w", 0.05), fg)
+            _line(d, S, ly["from"], ly["to"], ly.get("w", 0.05), lc)
         elif t == "tick":
-            _tick(d, S, ly["at"], _angle(ly.get("dir", 90)), ly.get("len", 0.05), ly.get("w", 0.04), fg)
+            _tick(d, S, ly["at"], _angle(ly.get("dir", 90)), ly.get("len", 0.05), ly.get("w", 0.04), lc)
+        elif t == "region":
+            _region(img, S, ly, fg)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")

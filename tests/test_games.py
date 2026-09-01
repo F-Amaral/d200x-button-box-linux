@@ -13,7 +13,7 @@ from d200x_button_box.games import ac_rally, lmu
 def test_registry_and_capabilities():
     av = games.available()
     assert av["lmu"]["can_read"] and av["lmu"]["can_write"]
-    assert av["ac_rally"]["can_read"] and not av["ac_rally"]["can_write"]
+    assert av["ac_rally"]["can_read"] and av["ac_rally"]["can_write"]
     assert not av["ac_evo"]["can_read"] and not av["ac_evo"]["can_write"]
     assert av["ac_rally"]["label"] == "AC Rally"
 
@@ -26,7 +26,7 @@ def test_detect_hints():
 
 def test_dispatch_errors_for_missing_capability():
     with pytest.raises(ValueError):
-        games.bind("ac_rally", "x", "y", 1)      # no writer
+        games.bind("ac_evo", "x", "y", 1)       # no writer
     with pytest.raises(ValueError):
         games.read("ac_evo", "x")               # no importer
     with pytest.raises(ValueError):
@@ -100,12 +100,20 @@ def _fstr(s: str) -> bytes:
     return struct.pack("<i", len(b)) + b
 
 
-def _acr_sav(mappings):
-    """Minimal blob with the same FString run the real .sav uses per mapping."""
-    out = b"GVAS_fake_header\x00\x01\x02\x03"
+def _acr_sav(mappings, active="InputUserSettings.Profiles.Current2"):
+    """Minimal blob mirroring the real .sav: an active-profile id, one key
+    profile object, then a count-prefixed run of 4-FString + 6-byte mappings."""
+    out = b"GVAS\x00\x00\x00\x00"
+    out += _fstr("CurrentProfileIdentifier") + _fstr("TagName") + _fstr(active)
+    out += _fstr("None")                                  # end tagged props
+    out += _fstr(active)                                  # the profile map key
+    out += _fstr("/Script/acr.AcrEnhancedPlayerMappableKeyProfile")
+    out += _fstr("AcrEnhancedPlayerMappableKeyProfile_2147000001")
+    out += b"\x00" + struct.pack("<i", len(mappings))
     for action, key in mappings:
         out += _fstr(action) + _fstr(key) + _fstr("RawInput") + _fstr("SteeringWheel")
-        out += b"\x05\x00\x00\x00\x00\x00"       # the constant trailer the game writes
+        out += b"\x05\x00\x00\x00\x00\x00"                # the constant trailer the game writes
+    out += _fstr("ProfileIdentifier") + _fstr("ObjectEnd")
     return out
 
 
@@ -125,3 +133,32 @@ def test_ac_rally_read_accepts_a_directory(tmp_path):
     sav.parent.mkdir(parents=True)
     sav.write_bytes(_acr_sav([("Respawn", "GenericUSBController_Button7_1209_D200")]))
     assert ac_rally.read(tmp_path) == {7: ["Respawn"]}
+
+
+def test_ac_rally_write_splices_hardwarekey(tmp_path):
+    sav = tmp_path / "EnhancedInputUserSettings.sav"
+    sav.write_bytes(_acr_sav([
+        ("Handbrake", "GenericUSBController_Button22_346E_0002"),  # on the wheel
+        ("Respawn", "None"),                                       # unbound
+        ("GearUp", "GenericUSBController_Button5_1209_D200"),      # already on our btn 5
+    ]))
+
+    # bind Handbrake -> our button 5; GearUp (also btn 5) gets cleared
+    res = ac_rally.write(sav, "Handbrake", 5)
+    assert res["ok"] and (tmp_path / "EnhancedInputUserSettings.sav.d200x-bak").is_file()
+    ctl = ac_rally.controls(sav)
+    assert ctl["bound"] == {"Handbrake": 5}
+    assert ac_rally.read(sav) == {5: ["Handbrake"]}
+
+    # clear it again
+    ac_rally.write(sav, "Handbrake", None)
+    assert ac_rally.controls(sav)["bound"] == {}
+
+    with pytest.raises(ValueError, match="unknown control"):
+        ac_rally.write(sav, "NoSuchAction", 1)
+
+
+def test_ac_rally_write_via_dispatch_blocked_for_missing_capability():
+    # ac_evo has no writer
+    with pytest.raises(ValueError):
+        games.bind("ac_evo", "x", "y", 1)

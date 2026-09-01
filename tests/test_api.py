@@ -178,7 +178,8 @@ def test_games_endpoint(client):
     status, games = call("GET", "/api/games")
     assert status == 200 and "lmu" in games and "path" in games["lmu"]
     assert games["lmu"]["can_read"] and games["lmu"]["can_write"]
-    assert games["ac_rally"]["can_read"] and not games["ac_rally"]["can_write"]
+    assert games["ac_rally"]["can_read"] and games["ac_rally"]["can_write"]
+    assert not games["ac_evo"]["can_read"] and not games["ac_evo"]["can_write"]
 
 
 def test_glyphs_endpoint(client):
@@ -282,6 +283,46 @@ def test_compose_editor_roundtrip(client, tmp_path):
     assert gen.is_file()
     assert telltales._path("seat_fore") == gen  # resolver now prefers it
 
+    # a new user icon with a coloured layer -> the colour survives a key tint
+    coloured = {"base": "turn", "base_scale": 1.0, "base_at": [0.5, 0.5], "layers": [
+        {"type": "arrow", "at": [0.62, 0.5], "dir": "left", "len": 0.34, "head": 0.13,
+         "w": 0.06, "color": "#4a9eff"}]}
+    call("PUT", "/api/compose/turn_left", {"spec": coloured})
+    assert "turn_left" in call("GET", "/api/compose")[1]
+    tinted = telltales.tint("turn_left", "#ff0000", 96)   # fg red
+    im = Image.open(io.BytesIO(tinted)).convert("RGBA")
+    px = im.load()
+    red = blue = 0
+    for y in range(0, 96, 3):
+        for x in range(0, 96, 3):
+            r, g, b, a = px[x, y]
+            if a < 20:
+                continue
+            if r > 150 and g < 100 and b < 100:
+                red += 1
+            elif b > 150 and r < 120:
+                blue += 1
+    assert red > 10 and blue > 10  # base recoloured, the arrow kept its blue
+
+    # a region layer: fill the left arrow's enclosed interior white, keep the rest
+    region = {"base": "turn", "base_scale": 1.0, "base_at": [0.5, 0.5], "layers": [
+        {"type": "region", "at": [0.25, 0.5], "size": [0.5, 1.0], "color": "#4a9eff", "fill": "#ffffff"}]}
+    _, png2 = call("POST", "/api/compose/preview", {"spec": region, "fg": "#cccccc"}, raw=True)
+    im2 = Image.open(io.BytesIO(png2)).convert("RGBA")
+    p2 = im2.load()
+    W, H = im2.size
+    white = grey = 0
+    for y in range(0, H, 3):
+        for x in range(0, W, 3):
+            r, g, b, a = p2[x, y]
+            if a < 20:
+                continue
+            if min(r, g, b) > 230:
+                white += 1
+            elif 180 < r < 220 and abs(r - g) < 15 and abs(g - b) < 15:
+                grey += 1
+    assert white > 20 and grey > 20  # left arrow filled white, right arrow still grey
+
     status, one = call("GET", "/api/compose/seat_fore")
     assert one["customised"] is True
 
@@ -290,6 +331,22 @@ def test_compose_editor_roundtrip(client, tmp_path):
     assert status == 200
     assert "seat_fore" not in compose.user_specs()
     assert not gen.exists()
+
+
+def test_action_icons_endpoint(client):
+    call, daemon = client
+    from d200x_button_box import glyphs
+
+    status, m = call("GET", "/api/action-icons")
+    assert status == 200 and m == {}
+
+    call("PUT", "/api/action-icons", {"label": "Cycle Lights", "glyph": "fog_front"})
+    assert glyphs.label_glyph("cycle lights") == "fog_front"          # exact override wins
+    assert glyphs.label_glyph("Cycle Wipers") == "wiper"              # others still keyword-matched
+    assert ("repush",) in daemon.calls
+
+    call("PUT", "/api/action-icons", {"label": "Cycle Lights", "glyph": None})
+    assert glyphs.label_glyph("cycle lights") == "headlights_auto"    # back to the keyword hint
 
 
 def test_sse_sends_initial_state(client):

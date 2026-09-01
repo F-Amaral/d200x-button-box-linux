@@ -51,14 +51,43 @@ def _silhouette(name: str):
     return Image.open(_path(name)).convert("RGBA")
 
 
+def _has_colour(im) -> bool:
+    """True if the PNG has saturated (non-greyscale) opaque pixels -- a
+    hand-coloured composed icon, whose colours must survive `tint()`."""
+    small = im.resize((16, 16))
+    px = small.load()
+    for y in range(16):
+        for x in range(16):
+            r, g, b, a = px[x, y]
+            if a > 20 and max(r, g, b) - min(r, g, b) > 40:
+                return True
+    return False
+
+
 def tint(name: str, colour: str, size: int) -> bytes:
-    """A `size`x`size` RGBA PNG of tell-tale `name` filled with `colour`."""
+    """A `size`x`size` RGBA PNG of tell-tale `name` filled with `colour`.
+
+    A plain white/grey symbol is recoloured wholesale. A composed icon that
+    carries its own colours keeps them -- only its greyscale parts take
+    `colour`.
+    """
     from PIL import Image, ImageColor, ImageOps
 
     sil = _silhouette(name)
-    alpha = sil.getchannel("A")
-    solid = Image.new("RGBA", sil.size, ImageColor.getrgb(colour or "#ffffff") + (255,))
-    solid.putalpha(alpha)
+    fg = ImageColor.getrgb(colour or "#ffffff")
+    if _has_colour(sil):
+        px = sil.load()
+        solid = Image.new("RGBA", sil.size, (0, 0, 0, 0))
+        op = solid.load()
+        for y in range(sil.height):
+            for x in range(sil.width):
+                r, g, b, a = px[x, y]
+                if a == 0:
+                    continue
+                op[x, y] = (r, g, b, a) if max(r, g, b) - min(r, g, b) > 40 else fg + (a,)
+    else:
+        solid = Image.new("RGBA", sil.size, fg + (255,))
+        solid.putalpha(sil.getchannel("A"))
     if solid.size != (size, size):
         solid = ImageOps.contain(solid, (size, size), Image.Resampling.LANCZOS)
         canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))

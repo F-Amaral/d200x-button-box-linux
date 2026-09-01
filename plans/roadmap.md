@@ -234,13 +234,57 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
 - **daemon:** queued profile/page switches (`/api/activate`, `/api/page`) now
   apply even while the deck is disconnected (were stuck behind the device-poll
   branch) — the web UI stays usable during a reconnect.
-- **writer — next.** Rebinding means changing a HardwareKey FString (e.g.
-  `None` 5 bytes → 39 bytes), which shifts the file and breaks the enclosing
-  UE property `Size` fields. Needs a real (minimal) GVAS property parser to
-  find + fix those sizes, or a vendored single-file GVAS lib. Format quirks
-  seen: property tag looks like `Name·Type·i32·i32(Size)·u8(guidFlag)·value`
-  but StructProperty/GameplayTag nesting differs — needs proper decode, not
-  byte-poking.
+- **writer DONE** — `games.ac_rally.write()`. Turned out the mappings are a
+  plain `int32`-count-prefixed array inside the profile object (custom UE
+  serialization, **not** a tagged `MapProperty`), so **no `Size` fields wrap
+  them** — a rebind is a straight FString splice, no tree re-serialization.
+  `write()` finds the active profile's run (matched via
+  `CurrentProfileIdentifier` → `InputUserSettings.Profiles.*`, falls back to the
+  run with the most non-`None` keys), splices the target action's HardwareKey
+  (`GenericUSBController_Button<N>_1209_D200` ↔ `None`), and clears any other
+  action that was on that button. One-time `.d200x-bak`; the API refuses while
+  the game is detected running. `controls()` lists the 30 SteeringWheel actions
+  + which of our buttons each is on. Header + `ObjectEnd` tail verified
+  byte-identical after a write; mapping count stable. **The game reads the
+  rewritten save** (user confirmed).
+
+### Post-writer fixes (bugs the user hit + related asks)
+- **bind-in-game "game config not found" after any bind** — `GAME_CONTROLS[game]
+  = undefined` (to invalidate) left the key present so `ensureControls` never
+  refetched. Now `delete`s it, doesn't cache fetch failures, and re-renders the
+  editor after a bind.
+- **gamepad `value` no longer a free field defaulting to 1** — it defaults to
+  the deck slot's **canonical button** (the stable `default_profile` map: LCD
+  key i → i+1, status → 14, encoder subs → 17..25). Shown as text with an
+  "override" link for the rare custom case. Stops two keys colliding on button 1.
+- **bind-in-game closes the loop** — a successful bind also labels the deck key
+  (`niceControl(action)`) if it has no manual label, so the tell-tale
+  auto-detect kicks in. CamelCase action names shown split.
+- glyph hints: `respawn` → refresh (was matching `esp` inside "r-**esp**-awn").
+- **composed-icon colour layers** — a `compose` layer can carry `color:` to draw
+  itself in a fixed colour (tint one arrow of `turn` to mark left/right). The
+  key-render tint (`telltales.tint`) now recolours only the greyscale parts of a
+  composed PNG and keeps saturated pixels, so the layer colour survives.
+- **create a new composed icon** — `＋` in the web icon editor (seeds from the
+  current icon, becomes pickable on save); `d200x-button-box icons new <name>
+  [--base <telltale>]` on the CLI.
+- **`region` compose layer** — recolour / fill part of a symbol, clipped to a
+  rect or ellipse. `fill:` floods the enclosed area (hollow + the stroke ring)
+  then the strokes are drawn back on top (in `color:` if given, else their
+  original colour) — no gap between outline and fill. Achieves "colour the left
+  arrow of `turn` blue with a white interior".
+- **`icons promote` already reads from `icons.yaml`** — an editor-created icon
+  promotes with no manual copy; the misleading "paste into a spec" hint is
+  fixed. (No web button — the CLI is enough.)
+- **per-label default icon** — `glyphs.action_icon_map()` reads
+  `CONFIG_DIR/action_icons.yaml` (`{normalised label -> glyph}`); `label_glyph`
+  checks it before the keyword hints. Editable: a "set / change / clear" link in
+  the editor's Auto look (picks for every key with that label),
+  `GET/PUT /api/action-icons`, `d200x-button-box icons action <label> [glyph]
+  [--clear]`.
+- AC Rally reader completeness: the `.sav` only holds the 30 SteeringWheel
+  actions (all extracted); other menu categories live in the game's `.pak`
+  default mapping contexts, not in a rebindable save.
 
 ### AC EVO importer — separate, harder
 - AC EVO controls are an **undocumented binary protobuf**
