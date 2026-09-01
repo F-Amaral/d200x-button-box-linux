@@ -46,19 +46,17 @@ _CTYPES = {
 }
 
 
-def serve(daemon, api_cfg) -> threading.Thread | None:
+def serve(daemon, api_cfg) -> None:
     Handler.daemon = daemon
     Handler.token = api_cfg.token
     try:
         httpd = _Server((api_cfg.host, api_cfg.port), Handler)
     except OSError as e:
         log.warning("API disabled: cannot bind %s:%s (%s)", api_cfg.host, api_cfg.port, e)
-        return None
+        return
     daemon._httpd = httpd
-    t = threading.Thread(target=httpd.serve_forever, name="d200x-api", daemon=True)
-    t.start()
+    threading.Thread(target=httpd.serve_forever, name="d200x-api", daemon=True).start()
     log.info("API on http://%s:%s", api_cfg.host, api_cfg.port)
-    return t
 
 
 class _Server(ThreadingHTTPServer):
@@ -306,15 +304,13 @@ class Handler(BaseHTTPRequestHandler):
         if seg == ["glyphs"] and method == "GET":
             from . import compose, glyphs, telltales
 
+            # for the symbol picker + compose base list: our dashboard/ISO set,
+            # the curated Material set (name -> codepoint hex, for @font-face),
+            # and which of them are parametric composed icons.
             return self._json({
-                "names": glyphs.names(),
-                "aliases": glyphs.ALIASES,
-                "composed": list(compose.all_specs()),
-                "bases": telltales.names(),   # any tell-tale can be a compose base
-                # for the client-side symbol picker: our dashboard/ISO set, and
-                # the curated Material set as name -> codepoint (hex) for @font-face
                 "telltales": telltales.names(),
                 "material": {k: f"{v:x}" for k, v in glyphs.NAME_TO_CP.items()},
+                "composed": list(compose.all_specs()),
             })
 
         # --- icon editor: parametric composed icons -----------------

@@ -237,13 +237,15 @@ def render(spec: dict | str, colour: str, size: int = 256) -> bytes:
     wide symbol like the seat fills the frame at scale 1.0 -- matching the
     fetched tell-tales, which are trimmed to a square and scaled to fill.
     """
+    from PIL import ImageColor
+
     from . import telltales
 
     Image, ImageDraw = _pil()
     if isinstance(spec, str):
         spec = COMPOSED[spec]
     S = size
-    fg = _rgba(colour)
+    fg = ImageColor.getrgb(colour or "#ffffff") + (255,)
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
 
     base = spec.get("base")
@@ -277,13 +279,6 @@ def render(spec: dict | str, colour: str, size: int = 256) -> bytes:
 
 def _or_full(im):
     return im.getbbox() or (0, 0, im.size[0], im.size[1])
-
-
-def _rgba(colour: str):
-    c = (colour or "#ffffff").lstrip("#")
-    if len(c) == 3:
-        c = "".join(ch * 2 for ch in c)
-    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), 255
 
 
 # --------------------------------------------------------------------------- #

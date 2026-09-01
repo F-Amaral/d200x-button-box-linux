@@ -53,11 +53,11 @@ def _silhouette(name: str):
 
 def tint(name: str, colour: str, size: int) -> bytes:
     """A `size`x`size` RGBA PNG of tell-tale `name` filled with `colour`."""
-    from PIL import Image, ImageOps
+    from PIL import Image, ImageColor, ImageOps
 
     sil = _silhouette(name)
     alpha = sil.getchannel("A")
-    solid = Image.new("RGBA", sil.size, _rgb(colour) + (255,))
+    solid = Image.new("RGBA", sil.size, ImageColor.getrgb(colour or "#ffffff") + (255,))
     solid.putalpha(alpha)
     if solid.size != (size, size):
         solid = ImageOps.contain(solid, (size, size), Image.Resampling.LANCZOS)
@@ -67,10 +67,3 @@ def tint(name: str, colour: str, size: int) -> bytes:
     buf = io.BytesIO()
     solid.save(buf, format="PNG")
     return buf.getvalue()
-
-
-def _rgb(colour: str) -> tuple[int, int, int]:
-    c = (colour or "#ffffff").lstrip("#")
-    if len(c) == 3:
-        c = "".join(ch * 2 for ch in c)
-    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)

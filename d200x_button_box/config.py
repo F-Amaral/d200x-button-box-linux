@@ -202,24 +202,12 @@ class Page:
     knobs: dict[int, dict] = field(default_factory=dict)  # index -> {left/right/press: binding}
     style: dict = field(default_factory=dict)             # default generated-icon style for this page
 
-    def _pick(self, field_name: str) -> dict:
-        return {i: b[field_name] for i, b in self.keys.items()
-                if isinstance(b, dict) and b.get(field_name)}
-
     def labels(self) -> dict[int, str]:
-        return self._pick("label")
-
-    def icons(self) -> dict[int, str]:
-        return self._pick("icon")
-
-    def icon_texts(self) -> dict[int, str]:
-        return self._pick("icon_text")
-
-    def icon_styles(self) -> dict[int, dict]:
-        return self._pick("icon_style")
+        return {i: b["label"] for i, b in self.keys.items()
+                if isinstance(b, dict) and b.get("label")}
 
     def icon_paths_in_use(self) -> set[str]:
-        return set(self.icons().values())
+        return {b["icon"] for b in self.keys.values() if isinstance(b, dict) and b.get("icon")}
 
     def to_dict(self) -> dict:
         d: dict = {}
@@ -348,9 +336,6 @@ def save_profile(prof: Profile) -> None:
     path = profile_path(prof.name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(prof.to_dict(), sort_keys=False, allow_unicode=True))
-
-
-HOME_KEY_INDEX = protocol.PAGE_KEY_INDICES[0]  # leftmost aux button (no screen) = go home
 
 
 def default_profile(name: str = "default") -> Profile:

@@ -238,10 +238,9 @@ def test_iso_telltale_render_and_tint():
 
     from PIL import Image
 
-    from d200x_button_box import glyphs, layout, telltales
+    from d200x_button_box import layout, telltales
 
     assert "hl_low" in telltales.names() and "turn" in telltales.names()
-    assert "hl_low" in glyphs.telltale_names()
 
     png = layout.render_icon({"fg": "#ff0000"}, glyph="turn")
     with Image.open(_io.BytesIO(png)) as im:
@@ -257,11 +256,11 @@ def test_composed_icons_are_built_and_pickable():
 
     from PIL import Image
 
-    from d200x_button_box import compose, glyphs, layout
+    from d200x_button_box import compose, layout, telltales
 
     # every spec has a committed PNG (run tools/build-composed-icons.py if this fails)
     for name in compose.names():
-        assert name in glyphs.telltale_names(), f"{name}.png missing -- rebuild composed icons"
+        assert name in telltales.names(), f"{name}.png missing -- rebuild composed icons"
         png = layout.render_icon({"fg": "#4a9eff"}, glyph=name)
         with Image.open(_io.BytesIO(png)) as im:
             assert im.size == (196, 196) and im.mode == "RGBA" and im.getbbox() is not None

@@ -6,7 +6,8 @@ Two sources, both bundled:
   - Material Icons Round (Apache-2.0 font, `assets/`) -- nav, utility, media.
 
 `render_icon` prefers a tell-tale; `NAME_TO_CP` maps the Material fallbacks.
-`action_glyph` / `label_glyph` drive automatic icon selection.
+`action_glyph` / `label_glyph` drive automatic icon selection. The pickable
+name lists come straight from `telltales.names()` + `NAME_TO_CP`.
 """
 
 from __future__ import annotations
@@ -50,25 +51,6 @@ def codepoint(name: str) -> int | None:
     return None
 
 
-def names() -> list[str]:
-    """All usable glyph names: tell-tales (incl. the composed ones, which are
-    built to PNGs) + the Material set."""
-    from . import telltales
-
-    return sorted(set(telltales.names()) | set(NAME_TO_CP))
-
-
-def telltale_names() -> list[str]:
-    from . import telltales
-
-    return sorted(telltales.names())
-
-
-def is_glyph(name: str) -> bool:
-    from . import telltales
-
-    n = (name or "").strip().lower().replace(" ", "_").replace("-", "_")
-    return telltales.has(n) or codepoint(n) is not None
 
 
 # --- automatic selection --------------------------------------------------

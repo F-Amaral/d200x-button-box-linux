@@ -92,7 +92,7 @@ async function boot() {
   GAMES = await api("games").catch(() => ({}));
   GLYPHS = await api("glyphs").catch(() => GLYPHS);
   COMPOSED_NAMES = new Set(GLYPHS.composed || []);
-  TELLTALE_SET = new Set(GLYPHS.telltales || GLYPHS.bases || []);
+  TELLTALE_SET = new Set(GLYPHS.telltales || []);
   S.bindGame = Object.entries(GAMES).find(([, g]) => g.can_write && g.path)?.[0] || null;
   await loadProfile(S.name);
   connectSSE();
@@ -440,17 +440,11 @@ function initials(s) {
   if (!w.length) return "";
   return (w.length === 1 ? w[0] : w.map(x => x[0]).join("")).slice(0, 4).toUpperCase();
 }
-// does mode `m` render on a circle/square frame? (frameless tell-tales don't)
-// the effective glyph for the current mode (for deciding frame vs colour-only)
-function modeGlyph(m, kb) {
-  if (m === "symbol") return kb.glyph || null;
-  if (m === "auto") return derivedGlyph(kb) || null;
-  return null;   // letters / image
-}
-// a tell-tale is frameless — only its colour is adjustable, not a frame
+// "frame" = draws on a circle/square frame; "colour" = frameless tell-tale
+// (only its colour is adjustable); null = image (no colour controls).
 function frameKind(m, kb) {
   if (m === "image") return null;
-  const g = modeGlyph(m, kb);
+  const g = m === "symbol" ? kb.glyph : m === "auto" ? derivedGlyph(kb) : null;
   return (g && TELLTALE_SET.has(g)) ? "colour" : "frame";
 }
 function lookField(kb, index) {
@@ -601,7 +595,7 @@ function symTile(name, node) {
 }
 function buildSymGrid(q) {
   const box = $("#sym_grid"); box.innerHTML = "";
-  const tt = (GLYPHS.telltales || GLYPHS.bases || []).filter(n => n.includes(q));
+  const tt = (GLYPHS.telltales || []).filter(n => n.includes(q));
   const mat = Object.keys(GLYPHS.material || {}).filter(n => n.includes(q)).sort();
   if (tt.length) {
     box.append(el("h4", { textContent: "Dashboard & ISO" }));
@@ -1117,7 +1111,7 @@ async function openCompose(pick) {
   for (const n of Object.keys(C.all).sort())
     sel.append(el("option", { value: n, textContent: n + (C.all[n].customised ? "  ✓" : "") }));
   const bsel = $("#c_base"); bsel.innerHTML = ""; bsel.append(el("option", { value: "", textContent: "(none)" }));
-  try { const g = await api("glyphs"); for (const b of (g.bases || [])) bsel.append(el("option", { value: b, textContent: b })); } catch (e) { }
+  for (const b of (GLYPHS.telltales || [])) bsel.append(el("option", { value: b, textContent: b }));
   cLoad(pick && C.all[pick] ? pick : sel.value);
   $("#composeDlg").showModal();
 }

@@ -169,21 +169,17 @@ def cmd_status(args) -> int:
     return 0
 
 
-def _add_run_parser(sub) -> None:
-    r = sub.add_parser("run", help="run the daemon (deck -> virtual gamepad + API)")
-    r.add_argument("--log-level", default="INFO")
-    r.add_argument("--profile", help="force this profile instead of auto/settings")
-    r.add_argument("--no-api", action="store_true", help="do not start the HTTP API")
-    r.set_defaults(func=cmd_run)
+def _add_run_args(p) -> None:
+    p.add_argument("--log-level", default="INFO")
+    p.add_argument("--profile", help="force this profile instead of auto/settings")
+    p.add_argument("--no-api", action="store_true", help="do not start the HTTP API")
+    p.set_defaults(func=cmd_run)
 
 
 def build_daemon_parser() -> argparse.ArgumentParser:
     """`d200x-buttonboxd [OPTIONS]` -- the run subcommand, flattened."""
     p = argparse.ArgumentParser(prog="d200x-buttonboxd")
-    p.add_argument("--log-level", default="INFO")
-    p.add_argument("--profile", help="force this profile instead of auto/settings")
-    p.add_argument("--no-api", action="store_true", help="do not start the HTTP API")
-    p.set_defaults(func=cmd_run)
+    _add_run_args(p)
     return p
 
 
@@ -191,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="d200x-button-box")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    _add_run_parser(sub)
+    _add_run_args(sub.add_parser("run", help="run the daemon (deck -> virtual gamepad + API)"))
 
     d = sub.add_parser("debug", help="dump raw HID reports to discover your control ids")
     d.add_argument("--out", metavar="FILE", help="also write the report lines to FILE")
