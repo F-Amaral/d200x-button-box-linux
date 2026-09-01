@@ -15,6 +15,7 @@ const ACTION_HINT = {
   page: "switch page in this profile",
 };
 const NAV_FNS = [["home", "Home"], ["prev_page", "Previous page"], ["next_page", "Next page"]];
+const gameLabel = k => ({ lmu: "LMU", ac_evo: "AC EVO", ac_rally: "AC Rally" }[k] || k.toUpperCase());
 const NAV_FN_LABEL = Object.fromEntries(NAV_FNS);
 const STYLE_KEYS = ["mode", "shape", "fill", "border", "fg", "font"];
 const NAV_BASE = { mode: "ring", shape: "round", fill: "#0d0f13", border: "#7d8794", fg: "#aeb6c2", font: "sans" };
@@ -22,8 +23,21 @@ const GAME_BASE = { mode: "solid", shape: "circle", fill: "#2a3140", border: "#4
 
 const S = {
   name: null, profile: null, page: 0, sel: null, listening: false,
-  profiles: [], settings: null, es: null, dirty: false, saveT: null, bindGame: null,
+  profiles: [], profileGames: {}, settings: null, es: null, dirty: false, saveT: null,
 };
+// the game a profile is for: its name (or "<game>-N") matching a known game.
+// Drives the in-editor "bind this button in <game>" tool (writers only).
+function profileGame() {
+  if (S.profile?.game) return GAMES[S.profile.game] ? S.profile.game : null;
+  const base = (S.name || "").replace(/-\d+$/, "");   // fall back to the name
+  return GAMES[S.name] ? S.name : (GAMES[base] ? base : null);
+}
+// "read + write" / "import only" / "no import yet" / null
+function gameCap(g) {
+  const info = GAMES[g];
+  if (!info) return null;
+  return info.can_write ? "read + write" : info.can_read ? "import only" : "no import yet";
+}
 let GAMES = {}, GAME_CONTROLS = {};
 let GLYPHS = { telltales: [], material: {}, composed: [] };
 let COMPOSED_NAMES = new Set();
@@ -63,7 +77,7 @@ const intKeys = o => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => 
 function normalize(name, raw) {
   const mk = p => ({ name: p.name || "", style: p.style || {}, keys: intKeys(p.keys), knobs: intKeys(p.knobs) });
   const pg = raw.pages ? raw.pages.map(mk) : [mk(raw)];
-  return { name, pages: pg.length ? pg : [mk({})] };
+  return { name, game: raw.game || null, pages: pg.length ? pg : [mk({})] };
 }
 // drop an empty hold:{} (checkbox on, no action picked yet) without touching the live model
 function cleanKey(b) {
@@ -81,8 +95,9 @@ function serialize() {
     keys: Object.fromEntries(Object.entries(g.keys).map(([k, v]) => [k, cleanKey(v)])),
     knobs: g.knobs,
   });
-  return (p.pages.length === 1 && !p.pages[0].name && !Object.keys(p.pages[0].style || {}).length)
+  const flat = (p.pages.length === 1 && !p.pages[0].name && !Object.keys(p.pages[0].style || {}).length)
     ? dump(p.pages[0]) : { pages: p.pages.map(dump) };
+  return p.game ? { game: p.game, ...flat } : flat;
 }
 
 function isNav(b) { return b.role === "nav" || "page" in b || "profile" in b || "nav" in b; }
@@ -96,13 +111,12 @@ function registerOf(b) {
 // ---- load / save --------------------------------------------------
 async function boot() {
   const st = await api("state"); setConn(true); setDeck(st.device.connected);
-  const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active;
+  const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active; S.profileGames = pl.games || {};
   S.settings = await api("settings");
   GAMES = await api("games").catch(() => ({}));
   GLYPHS = await api("glyphs").catch(() => GLYPHS);
   COMPOSED_NAMES = new Set(GLYPHS.composed || []);
   TELLTALE_SET = new Set(GLYPHS.telltales || []);
-  S.bindGame = Object.entries(GAMES).find(([, g]) => g.can_write && g.path)?.[0] || null;
   await loadProfile(S.name);
   connectSSE();
   maybeIntro();
@@ -267,8 +281,28 @@ function renderPageStrip() {
   const gear = el("button", { class: "addpage", textContent: "⚙ default look", title: "the frame + colour every auto icon on this page starts from" });
   gear.onclick = openPageStyle;
   strip.append(gear);
+  strip.append(gameChip());
   if (multi)
     strip.append(el("div", { class: "auxnote", textContent: "the two round aux buttons flip pages — hold the left one for home" }));
+}
+// which game this profile is for; click to change. (Capability is shown in the
+// Profiles panel, not here.)
+function gameChip() {
+  const cur = S.profile?.game || (GAMES[profileGame()] ? profileGame() : null);
+  const chip = el("button", { class: "addpage gamechip", title: "which game this profile is for" });
+  chip.textContent = cur ? `🎮 ${gameLabel(cur)}` : "🎮 link a game";
+  chip.onclick = () => {
+    const sel = el("select");
+    sel.append(el("option", { value: "", textContent: "— not linked —" }));
+    Object.keys(GAMES).forEach(g => sel.append(el("option", { value: g, textContent: gameLabel(g) + " · " + gameCap(g), selected: g === cur })));
+    sel.onchange = () => {
+      S.profile.game = sel.value || undefined;
+      S.profileGames[S.name] = sel.value || undefined;
+      renderChrome(); renderPageStrip(); renderEditor(); touched();
+    };
+    chip.replaceWith(sel); sel.focus();
+  };
+  return chip;
 }
 function addPage() {
   const newPage = { name: "", style: {}, keys: {}, knobs: {} };
@@ -490,7 +524,9 @@ function actionBlock(binding, onChange) {
       valFld.append(el("span"), el("label", { style: "display:flex;gap:.4rem;align-items:center" }, [m, "pulse (tap, not hold)"]));
     }
     if (ACTION_HINT[a]) valFld.append(el("div", { class: "hint", textContent: ACTION_HINT[a] }));
-    if (a === "gamepad" && S.bindGame) valFld.append(gameBindRow(Number(binding.gamepad) || 1));
+    const pg = profileGame();
+    if (a === "gamepad" && pg && GAMES[pg]?.can_write)
+      valFld.append(gameBindRow(pg, Number(binding.gamepad) || 1));
   };
   sel.onchange = () => { setAct(binding, sel.value, sel.value === "gamepad" ? 1 : ""); rebuild(); onChange(); };
   rebuild();
@@ -503,10 +539,9 @@ async function ensureControls(game) {
   if (!(game in GAME_CONTROLS)) GAME_CONTROLS[game] = await api("games/" + game + "/controls").catch(() => null);
   return GAME_CONTROLS[game];
 }
-function gameBindRow(button) {
-  const game = S.bindGame;
+function gameBindRow(game, button) {
   const wrap = el("div"); wrap.style.gridColumn = "1 / -1";
-  const head = el("div", { class: "hint", style: "margin-top:.4rem", textContent: "bind this button in " + game.toUpperCase() + " (game must be closed):" });
+  const head = el("div", { class: "hint", style: "margin-top:.4rem", textContent: "bind this button in " + gameLabel(game) + " (game must be closed):" });
   const box = el("div", { style: "display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;margin-top:.2rem" });
   const sel = el("select"); sel.append(el("option", { textContent: "…" }));
   const go = el("button", { class: "ghost", textContent: "apply" });
@@ -899,7 +934,7 @@ function fld(labelText, control, hint) {
 
 async function refreshProfiles() {
   const pl = await api("profiles");
-  S.profiles = pl.profiles;
+  S.profiles = pl.profiles; S.profileGames = pl.games || {};
   if (!S.profiles.includes(S.name)) { S.name = pl.active; await loadProfile(S.name); }
 }
 
@@ -926,7 +961,8 @@ const PROF = {
     await refreshProfiles(); renderChrome();
   },
   async remove(n) {
-    await api("profiles/" + encodeURIComponent(n), { method: "DELETE" });
+    const r = await api("profiles/" + encodeURIComponent(n), { method: "DELETE" });
+    if (r && r.active && r.active !== S.name) { S.name = r.active; await loadProfile(r.active); }
     await refreshProfiles(); renderChrome();
   },
   async setHome(n) {
@@ -948,14 +984,19 @@ function nameField(n, cls) {
   wrap.append(text);
   return wrap;
 }
-// "＋ New profile" that expands to an inline input (no browser prompt)
+// "＋ New profile" -> expands to: name a blank one, or import from a game
 function newProfileButton(cls) {
   const btn = el("button", { class: cls || "ghost", textContent: "＋ New profile" });
   btn.onclick = () => {
-    const inp = el("input", { placeholder: "profile name", style: "width:100%" });
-    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { inp.value = ""; inp.blur(); } };
-    inp.onblur = () => { const v = inp.value.trim(); if (v) PROF.create(v); else renderChrome(); };
-    btn.replaceWith(inp); inp.focus();
+    const inp = el("input", { placeholder: "name a blank profile", style: "width:100%" });
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { box.replaceWith(newProfileButton(cls)); } };
+    inp.onblur = () => { const v = inp.value.trim(); if (v) { PROF.create(v); } else if (!importing) { renderChrome(); } };
+    let importing = false;
+    const imp = el("button", { class: "ghost", style: "width:100%;font-size:var(--fs-xs)", textContent: "⇩ or import from a game…" });
+    // mousedown fires before the input's blur (which would rebuild + drop this button)
+    imp.onmousedown = e => { e.preventDefault(); importing = true; openDrawer("import"); };
+    const box = el("div", { style: "display:flex;flex-direction:column;gap:4px" }, [inp, imp]);
+    btn.replaceWith(box); inp.focus();
   };
   return btn;
 }
@@ -1000,6 +1041,9 @@ function buildProfiles(body) {
     const row = el("div", { class: "prow" }, [nameField(n, "pname")]);
     if (n === S.name) row.append(el("span", { class: "ptag active", textContent: "active" }));
     if (n === S.settings.home.profile) row.append(el("span", { class: "ptag home", textContent: "home" }));
+    const g = S.profileGames[n];
+    if (g) row.append(el("span", { class: "ptag game", title: "linked to " + gameLabel(g),
+      textContent: "🎮 " + gameLabel(g) + " · " + (GAMES[g] ? gameCap(g) : "unknown") }));
     const acts = el("div", { class: "pacts" });
     const btn = (t, fn, danger) => Object.assign(el("button", { class: "ghost" + (danger ? " danger" : ""), textContent: t }), { onclick: fn });
     if (n !== S.name) acts.append(btn("use", () => PROF.activate(n)));
@@ -1010,8 +1054,12 @@ function buildProfiles(body) {
       acts.replaceChildren(inp); inp.focus(); inp.select();
     }));
     if (n !== S.settings.home.profile) acts.append(btn("set home", () => PROF.setHome(n)));
-    if (n !== S.name && n !== S.settings.home.profile && S.profiles.length > 1)
-      acts.append(btn("delete", () => { if (confirm("Delete profile “" + n + "”?")) PROF.remove(n); }, true));
+    if (n !== S.settings.home.profile && S.profiles.length > 1)
+      acts.append(btn("delete", () => {
+        const msg = n === S.name ? "Delete the active profile “" + n + "”? The deck switches to “" + S.settings.home.profile + "”."
+          : "Delete profile “" + n + "”?";
+        if (confirm(msg)) PROF.remove(n);
+      }, true));
     row.append(acts);
     list.append(row);
     list.append(autoRow(n));
@@ -1157,38 +1205,78 @@ function buildSettings(body) {
 }
 
 // -- Import panel --
+// Import builds a profile *for the game*: none yet -> create "<game>";
+// one exists -> update it or create "<game>-2".
 async function buildImport(body) {
   if (!Object.keys(GAMES).length) GAMES = await api("games").catch(() => ({}));
   const game = el("select");
-  Object.keys(GAMES).forEach(k => game.append(el("option", { value: k, textContent: k.toUpperCase() })));
+  Object.keys(GAMES).forEach(k => game.append(el("option", { value: k, textContent: gameLabel(k) })));
   const path = el("input", { type: "text", placeholder: "game install folder" });
   const pathHint = el("div", { class: "hint" });
   const over = el("input", { type: "checkbox", checked: true });
   const report = el("div", { class: "report", hidden: true });
+  const dest = el("div", { class: "fld" });          // "what happens" + choices
+  let mode = "new";                                   // new | update
+  const nextFree = base => { let n = base, i = 2; while (S.profiles.includes(n)) n = base + "-" + (i++); return n; };
+
   const syncPath = () => {
     const info = GAMES[game.value] || {};
     path.value = info.path || "";
     pathHint.textContent = info.path ? "auto-detected" : "not found — enter the game's install folder";
   };
-  game.onchange = syncPath; syncPath();
+  const overFld = fld("Overwrite", over, "replace labels you set by hand too");
+  const syncDest = () => {
+    dest.innerHTML = ""; mode = "new";
+    const canon = game.value;
+    const exists = S.profiles.includes(canon);
+    dest.append(el("label", { textContent: "Profile" }));
+    if (!exists) {
+      dest.append(el("div", {}, [el("b", { textContent: canon }), " — new profile from " + gameLabel(game.value) + "'s bindings"]));
+    } else {
+      const box = el("div", { style: "display:flex;flex-direction:column;gap:4px" });
+      const radio = (val, text, checked) => {
+        const r = el("input", { type: "radio", name: "impdest", checked });
+        r.onchange = () => { if (r.checked) { mode = val; overFld.style.display = val === "update" ? "" : "none"; } };
+        return el("label", { style: "display:flex;gap:.4rem;align-items:center" }, [r, text]);
+      };
+      box.append(radio("new", "New profile “" + nextFree(canon) + "”", true));
+      box.append(radio("update", "Update “" + canon + "” (relabel its keys)", false));
+      dest.append(box);
+    }
+    overFld.style.display = "none";                   // only relevant for "update"
+  };
+  game.onchange = () => { syncPath(); syncDest(); };
 
-  body.append(el("p", { class: "concept", html: "Labels the deck keys that are bound to the <b>D200x Button Box</b> controller inside <b>" + S.name + "</b> (the active profile)." }));
+  body.append(el("p", { class: "concept", html: "Reads a game's own bindings and builds a deck profile for it — every deck key bound to the <b>D200x Button Box</b> controller in that game gets that action as its label." }));
   body.append(fld("Game", game));
+  body.append(dest);
   body.append(fld("Path", path)); body.append(el("div", { class: "fld" }, [el("span"), pathHint]));
-  body.append(fld("Overwrite", over, "replace labels you set by hand too"));
+  body.append(overFld);
   body.append(report);
+  syncPath(); syncDest();
 
   const run = el("button", { class: "primary", textContent: "Import" });
   run.onclick = async () => {
+    const canon = game.value;
+    const targetName = mode === "update" ? canon : nextFree(canon);
     try {
-      const rep = await api("profiles/" + S.name + "/import", {
+      const rep = await api("profiles/" + encodeURIComponent(targetName) + "/import", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ game: game.value, path: path.value || undefined, overwrite: over.checked }) });
-      const lines = [`labelled ${Object.keys(rep.applied).length} button(s)`];
-      if (Object.keys(rep.skipped).length) lines.push(`\nkept your labels on: ${Object.entries(rep.skipped).map(([n, v]) => `btn ${n} (${v})`).join(", ")}`);
-      if (Object.keys(rep.unmatched).length) lines.push(`\nbound in-game but not on any control:\n` + Object.entries(rep.unmatched).map(([n, v]) => `  btn ${n} = ${v}`).join("\n"));
-      report.textContent = lines.join("\n"); report.hidden = false;
-      await loadProfile(S.name);
+        body: JSON.stringify({ game: game.value, path: path.value || undefined, overwrite: mode === "update" ? over.checked : true }) });
+      const n = Object.keys(rep.applied).length;
+      await refreshProfiles();
+      await PROF.activate(targetName);
+      const unmatched = Object.entries(rep.unmatched);
+      if (unmatched.length) {
+        // buttons bound in-game with no deck key — the user needs to see these
+        report.textContent = `${rep.created ? "created " : "updated "}“${rep.profile}” — labelled ${n}\n\n`
+          + `bound in-game but not on any deck key:\n` + unmatched.map(([b, v]) => `  btn ${b} = ${v}`).join("\n");
+        report.hidden = false;
+        syncDest();
+      } else {
+        toast(`${rep.created ? "Created" : "Updated"} “${rep.profile}” — ${n} button${n === 1 ? "" : "s"}`);
+        closeDrawer();
+      }
     } catch (e) { report.textContent = "import failed: " + e; report.hidden = false; }
   };
   body.append(el("div", { style: "margin-top:1rem" }, [run]));

@@ -2,10 +2,12 @@
 so the deck can show what each button does in-game without digging through
 config files.
 
-Currently supports Le Mans Ultimate (`UserData/player/direct input.json`).
-rF2/LMU numbers inputs in one namespace: axis half-ids fill 0-31, buttons
-start at 32. Our uinput pad has 0 axes, so game id N == our gamepad button
-(N - 32 + 1), 1-based.
+Supports:
+- Le Mans Ultimate -- `UserData/player/direct input.json` (JSON). rF2/LMU number
+  inputs in one namespace: axis half-ids fill 0-31, buttons start at 32; our
+  uinput pad has 0 axes, so game id N == our gamepad button (N - 32 + 1).
+- Assetto Corsa Rally -- `EnhancedInputUserSettings.sav` (UE5 GVAS SaveGame,
+  read-only for now). Button N maps 1:1 to our gamepad button N.
 """
 
 from __future__ import annotations
@@ -16,6 +18,13 @@ from pathlib import Path
 
 LMU_BUTTON_ID_BASE = 32
 _GAMEPAD_HINT = "d200x button box"  # match our device by name prefix
+
+# process-name substrings that mean "this game is running" (settings.auto_detect)
+DETECT_HINTS = {
+    "lmu": ["LeMansUltimate"],
+    "ac_evo": ["AssettoCorsaEVO", "acevo"],
+    "ac_rally": ["acr.exe", "Assetto Corsa Rally"],
+}
 
 _STEAM_ROOTS = [
     Path.home() / ".steam/steam/steamapps",
@@ -125,8 +134,101 @@ def lmu_bind(install: str | Path, control: str, button: int | None) -> dict:
     return {"ok": True, "control": control, "button": button, "backup": str(backup)}
 
 
-_IMPORTERS = {"lmu": import_lmu}
-_FINDERS = {"lmu": find_lmu}
+# --------------------------------------------------------------------------- #
+#  Assetto Corsa Rally (Unreal Engine 5 -- player rebindings in a GVAS SaveGame)
+# --------------------------------------------------------------------------- #
+# EnhancedInputUserSettings.sav stores each mapping as a run of four length-
+# prefixed FStrings:  <ActionName> <HardwareKey> "RawInput" "SteeringWheel".
+# HardwareKey is "GenericUSBController_Button<N>_<VID>_<PID>" (or "None").
+# Our virtual pad (gamepad.py: vendor=0x1209 product=0xD200) shows up as
+# "..._Button<N>_1209_D200", and button N maps 1:1 to our gamepad button N.
+ACR_APPIDS = ("3917090", "3919070")
+_ACR_SAV_REL = (
+    "pfx/drive_c/users/steamuser/AppData/Local/acr/Saved/SaveGames/"
+    "EnhancedInputUserSettings.sav"
+)
+_ACR_DEVICE_RE = re.compile(r"GenericUSBController_Button(\d+)_1209_D200$", re.I)
+
+
+def find_ac_rally() -> str | None:
+    for lib in _steam_libraries():
+        for appid in ACR_APPIDS:
+            sav = lib / "compatdata" / appid / _ACR_SAV_REL
+            if sav.is_file():
+                return str(sav)
+    return None
+
+
+def _acr_sav_path(path: str | Path) -> Path:
+    """Accept the .sav itself, a compatdata/<appid> dir, or a Steam library root."""
+    p = Path(path)
+    if p.is_file():
+        return p
+    cands = [p / _ACR_SAV_REL]
+    cands += [p / "compatdata" / a / _ACR_SAV_REL for a in ACR_APPIDS]
+    for c in cands:
+        if c.is_file():
+            return c
+    raise FileNotFoundError(f"EnhancedInputUserSettings.sav not found under {path}")
+
+
+def _acr_fstrings(data: bytes) -> list[str]:
+    """Every length-prefixed ASCII FString in the blob, in order."""
+    import struct
+
+    out: list[str] = []
+    i, n = 0, len(data)
+    while i < n - 4:
+        length = struct.unpack_from("<i", data, i)[0]
+        end = i + 4 + length
+        if 2 <= length <= 250 and end <= n and data[end - 1] == 0 \
+                and all(32 <= b < 127 for b in data[i + 4:end - 1]):
+            out.append(data[i + 4:end - 1].decode("latin1"))
+            i = end
+        else:
+            i += 1
+    return out
+
+
+def _acr_mappings(sav: Path) -> list[tuple[str, str]]:
+    """[(in-game action, hardware-key string)] for every mapping in the file."""
+    s = _acr_fstrings(sav.read_bytes())
+    return [
+        (s[j], s[j + 1])
+        for j in range(len(s) - 3)
+        if s[j + 2] == "RawInput" and s[j + 3] == "SteeringWheel"
+    ]
+
+
+def _split_camel(s: str) -> str:
+    """'CycleLights' -> 'Cycle Lights' (AC Rally action names are concatenated)."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)
+
+
+def import_ac_rally(path: str | Path) -> dict[int, list[str]]:
+    """{gamepad button (1-based) -> [in-game action names]} bound to our device."""
+    result: dict[int, list[str]] = {}
+    for action, key in _acr_mappings(_acr_sav_path(path)):
+        m = _ACR_DEVICE_RE.match(key)
+        if not m:
+            continue
+        btn, name = int(m.group(1)), _split_camel(action)
+        result.setdefault(btn, [])
+        if name not in result[btn]:
+            result[btn].append(name)
+    return result
+
+
+def find_ac_evo() -> str | None:
+    for lib in _steam_libraries():
+        p = lib / "common" / "Assetto Corsa EVO"
+        if p.is_dir():
+            return str(p)
+    return None
+
+
+_IMPORTERS = {"lmu": import_lmu, "ac_rally": import_ac_rally}
+_FINDERS = {"lmu": find_lmu, "ac_rally": find_ac_rally, "ac_evo": find_ac_evo}
 _CONTROL_LISTERS = {"lmu": lmu_controls}
 _BINDERS = {"lmu": lmu_bind}
 
@@ -134,7 +236,11 @@ _BINDERS = {"lmu": lmu_bind}
 def available_games() -> dict[str, dict]:
     out = {}
     for game, finder in _FINDERS.items():
-        out[game] = {"path": finder(), "can_write": game in _BINDERS}
+        out[game] = {
+            "path": finder(),
+            "can_read": game in _IMPORTERS,
+            "can_write": game in _BINDERS,
+        }
     return out
 
 
@@ -191,3 +297,22 @@ def apply_labels(profile, button_names: dict[int, list[str]], overwrite: bool = 
 
     unmatched = {n: " / ".join(v) for n, v in button_names.items() if n not in seen}
     return {"applied": applied, "skipped": skipped, "unmatched": unmatched}
+
+
+def prune_to_buttons(profile, keep: set[int]) -> None:
+    """Drop every gamepad key / knob sub-binding whose button isn't in `keep`.
+    Used for a profile freshly created by import -- keep only what the game
+    actually has bound to the deck, not the full 25-button starter map."""
+    for page in profile.pages:
+        page.keys = {
+            i: b for i, b in page.keys.items()
+            if not (isinstance(b, dict) and "gamepad" in b) or b["gamepad"] in keep
+        }
+        for i in list(page.knobs):
+            knob = page.knobs[i]
+            for sub in list(knob):
+                b = knob[sub]
+                if isinstance(b, dict) and "gamepad" in b and b["gamepad"] not in keep:
+                    del knob[sub]
+            if not knob:
+                del page.knobs[i]

@@ -94,3 +94,50 @@ def test_lmu_bind_refuses_when_device_absent(tmp_path):
         assert "not in the game's config" in str(e)
         return
     raise AssertionError("expected ValueError")
+
+
+# --- Assetto Corsa Rally (UE5 GVAS SaveGame) -------------------------------- #
+def _fstr(s: str) -> bytes:
+    import struct
+
+    b = s.encode("latin1") + b"\x00"
+    return struct.pack("<i", len(b)) + b
+
+
+def _acr_sav(mappings: list[tuple[str, str]]) -> bytes:
+    """Minimal blob with the same FString run the real .sav uses per mapping."""
+    out = b"GVAS_fake_header\x00\x01\x02\x03"
+    for action, key in mappings:
+        out += _fstr(action) + _fstr(key) + _fstr("RawInput") + _fstr("SteeringWheel")
+        out += b"\x05\x00\x00\x00\x00\x00"  # the constant trailer the game writes
+    return out
+
+
+def test_import_ac_rally_maps_our_device_buttons(tmp_path):
+    sav = tmp_path / "EnhancedInputUserSettings.sav"
+    sav.write_bytes(_acr_sav([
+        ("CycleLights", "GenericUSBController_Button1_1209_D200"),   # -> button 1
+        ("CycleWipers", "GenericUSBController_Button3_1209_D200"),   # -> button 3
+        ("Handbrake", "GenericUSBController_Button22_346E_0002"),    # MOZA -> ignored
+        ("GearUp", "None"),                                          # unbound -> ignored
+    ]))
+    # CamelCase action names are split for readable labels
+    assert gameimport.import_ac_rally(sav) == {1: ["Cycle Lights"], 3: ["Cycle Wipers"]}
+
+
+def test_import_ac_rally_accepts_a_directory(tmp_path):
+    sav = tmp_path / gameimport._ACR_SAV_REL
+    sav.parent.mkdir(parents=True)
+    sav.write_bytes(_acr_sav([("Respawn", "GenericUSBController_Button7_1209_D200")]))
+    assert gameimport.import_ac_rally(tmp_path) == {7: ["Respawn"]}
+
+
+def test_prune_to_buttons_drops_unbound_keys():
+    from d200x_button_box import config
+
+    prof = config.default_profile("acr")
+    n_before = len(prof.pages[0].keys)
+    gameimport.prune_to_buttons(prof, {1, 3})
+    assert set(prof.pages[0].keys) == {0, 2}          # only the kept buttons' keys
+    assert n_before > 2
+    assert prof.pages[0].knobs == {}                  # encoder subs all pruned

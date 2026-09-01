@@ -224,6 +224,7 @@ class Page:
 class Profile:
     name: str = "default"
     pages: list[Page] = field(default_factory=lambda: [Page()])
+    game: str | None = None          # the game this profile is for (import / bind-to-game)
 
     def page(self, i: int) -> Page:
         return self.pages[i % len(self.pages)] if self.pages else Page()
@@ -234,8 +235,12 @@ class Profile:
 
     def to_dict(self) -> dict:
         if len(self.pages) == 1 and not self.pages[0].name:
-            return self.pages[0].to_dict()  # keep single-page profiles flat
-        return {"pages": [p.to_dict() for p in self.pages]}
+            d = self.pages[0].to_dict()  # keep single-page profiles flat
+        else:
+            d = {"pages": [p.to_dict() for p in self.pages]}
+        if self.game:
+            d = {"game": self.game, **d}
+        return d
 
 
 def profile_path(name: str) -> Path:
@@ -263,7 +268,7 @@ def profile_from_raw(name: str, raw: dict) -> Profile:
         pages = [_page_from_dict(p or {}) for p in raw["pages"]]
     else:
         pages = [_page_from_dict(raw)]  # flat keys+knobs = single page
-    return Profile(name=name, pages=pages or [Page()])
+    return Profile(name=name, pages=pages or [Page()], game=raw.get("game") or None)
 
 
 def load_profile(name: str) -> Profile:
@@ -433,6 +438,8 @@ def _safe_name(name: str) -> str:
 
 
 BUILTIN_PROFILE_ORDER = ["default", "lmu", "ac_evo"]
+# ac_rally has no starter profile — "Import from a game" creates it (its layout
+# comes straight from the game's own bindings, unlike the curated lmu profile).
 
 # "launcher" is active when no game is running: start things and jump to a game
 # profile from the deck itself. Written verbatim so the examples keep comments.
@@ -469,7 +476,9 @@ def bootstrap() -> None:
     if not SETTINGS_PATH.exists():
         s = Settings()
         s.active_profile = "launcher"
-        s.auto_detect = {"lmu": ["LeMansUltimate"], "ac_evo": ["AssettoCorsaEVO", "acevo"]}
+        from .gameimport import DETECT_HINTS
+
+        s.auto_detect = {g: list(v) for g, v in DETECT_HINTS.items()}
         s.home = HomeConfig(profile="launcher", revert_seconds=5)
         # aux L: tap = prev page, hold = home;  aux R: tap = next page
         s.nav = NavConfig(binds={
@@ -477,10 +486,12 @@ def bootstrap() -> None:
             protocol.PAGE_KEY_INDICES[1]: {"tap": "next_page"},
         })
         try:
-            from .gameimport import find_lmu
+            from . import gameimport
 
-            if (lmu := find_lmu()):
+            if (lmu := gameimport.find_lmu()):
                 s.games["lmu"] = lmu
+            if (acr := gameimport.find_ac_rally()):
+                s.games["ac_rally"] = acr
         except Exception:  # noqa: BLE001
             pass
         s.save()

@@ -358,18 +358,19 @@ dialog h3 { margin: 0 0 var(--sp-4); font-size: var(--fs-md); }
 
 /* profiles list */
 .prow {
-  display: flex; align-items: center; gap: var(--sp-2);
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
   padding: var(--sp-2) 0; border-bottom: 1px solid var(--line);
 }
 .prow .pname { flex: 1; font-weight: 600; }
 .prow .pname input { width: 100%; font-weight: 600; }
 .prow .ptag {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap;
   padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--text-dim);
 }
 .prow .ptag.active { color: var(--sim); border-color: var(--sim); }
 .prow .ptag.home { color: var(--box); border-color: var(--box); }
-.prow .pacts { display: flex; gap: 4px; }
+.prow .ptag.game { text-transform: none; letter-spacing: 0; color: var(--text-dim); }
+.prow .pacts { display: flex; gap: 4px; margin-left: auto; }
 .prow .pacts button { padding: 3px 7px; font-size: var(--fs-xs); }
 
 /* page strip under the deck */
@@ -386,6 +387,8 @@ dialog h3 { margin: 0 0 var(--sp-4); font-size: var(--fs-md); }
 .pagestrip .ptab .x:hover { color: var(--danger); }
 .pagestrip .addpage { border: 1px dashed var(--line); border-radius: 8px; padding: 4px 10px; font-size: var(--fs-xs); background: transparent; color: var(--text-dim); }
 .pagestrip .auxnote { flex-basis: 100%; text-align: center; font-size: var(--fs-xs); color: var(--text-dim); }
+.pagestrip .gamechip { border-style: solid; border-color: var(--line-2); color: var(--text); }
+.pagestrip select { font-size: var(--fs-xs); padding: 3px 6px; }
 
 /* ---- phase 4: hints, focus, toast, intro ---------------------- */
 .cell .v.hinttext { color: var(--text-dim); font-style: italic; opacity: .8; }

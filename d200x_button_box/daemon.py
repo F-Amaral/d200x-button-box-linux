@@ -451,13 +451,6 @@ class Daemon:
                         self._on_event(ev)
                     self._drain_pending()
 
-                    if self._queued_profile is not None:
-                        self._apply_profile_binding(self._queued_profile)
-                        self._queued_profile = None
-                    if self._queued_page is not None:
-                        self.set_page(self._queued_page)
-                        self._queued_page = None
-
                     self._tick_hold(now)
                     self._tick_home(now, got_input)
 
@@ -469,7 +462,15 @@ class Daemon:
                     self._disconnect_device(str(e))
                     continue
 
-            # config / game-detect polling happens regardless of device state
+            # API requests + config polling run regardless of device state,
+            # so the web UI keeps working while the deck is unplugged
+            if self._queued_profile is not None:
+                self._apply_profile_binding(self._queued_profile)
+                self._queued_profile = None
+            if self._queued_page is not None:
+                self.set_page(self._queued_page)
+                self._queued_page = None
+
             if now - last_detect > _DETECT_POLL:
                 detected = gamedetect.detect(self.settings.auto_detect)
                 last_detect = now

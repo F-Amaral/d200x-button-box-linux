@@ -170,9 +170,77 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
 ## Next up
 
 ### AC Rally support
-- process detection + a starter profile + control-config importer for Assetto
-  Corsa Rally (Kunos, separate title from AC EVO). Needs a sample of its
-  bindings file — same evidence-gated path as the LMU importer.
+- installed. Steam **AppId 3917090**, path `…/steamapps/common/Assetto Corsa
+  Rally/`, exe `acr/Binaries/Win64/acr.exe`. It is **Unreal Engine 5** (nothing
+  like AC EVO's Kunos engine).
+- **scaffold DONE** — no `ac_rally` builtin profile: "Import from a game" builds
+  it. `gameimport.DETECT_HINTS` (`acr.exe` / `Assetto Corsa Rally`) seeds
+  `auto_detect` on import and on fresh bootstrap.
+- **config format — good news.** Player rebindings live in a **UE5 GVAS
+  SaveGame**: `compatdata/3917090/pfx/…/AppData/Local/acr/Saved/SaveGames/
+  EnhancedInputUserSettings.sav`. Standard UE5.4 GVAS (magic `GVAS`, 111 custom
+  versions, package `/Game/Data/Input/BC_InputUserSettings…`, then a normal
+  property tree). Each mapping is a 4-string run:
+  `<HardwareKey> · RawInput · SteeringWheel · <ActionName>`, HardwareKey like
+  `GenericUSBController_Button14_346E_0002` (MOZA VID_PID) or `None` if unbound.
+  Two profiles (`Default`, `Current1`); `Current1` is active. Full SteeringWheel
+  action list: brake, clutch, Handbrake, StartStopEngine, GearUp, GearDown,
+  GearR, Gear1..7, SteerWheel, CycleCamera, Look{Left,Right,Back}, CycleLights,
+  Toggle{Left,Right}Indicator, Respawn, {Increase,Decrease}{Abs,Tc}, Pause.
+- **our device**: virtual pad `D200x Button Box` VID `0x1209` PID `0xD200`
+  (`gamepad.py`) → HardwareKey `GenericUSBController_Button<N>_1209_D200`,
+  button N **1:1** with our gamepad button N (confirmed against a test binding:
+  CycleLights→btn1, CycleWipers→btn3).
+- **reader DONE** — `gameimport.import_ac_rally()` scans the .sav's FString runs
+  (`<action> <key> "RawInput" "SteeringWheel"`), no GVAS tree parse, no deps.
+  `find_ac_rally()` locates it via `compatdata/{3917090,3919070}/…`. Wired into
+  `_IMPORTERS` / `_FINDERS`, `available_games()` (`can_write: false`), bootstrap
+  path detection, the web import dropdown ("AC Rally"). Tests: 2 in
+  `test_gameimport.py`. Verified end-to-end against the real .sav.
+- **import flow reworked — builds a profile *for the game***. `POST
+  /api/profiles/<name>/import` **creates** `<name>` when missing, then
+  `gameimport.prune_to_buttons()` strips it down to only the buttons the game
+  actually binds (a 2-key `ac_rally` profile, not the 25-button starter map).
+  Seeds `settings.games` + `auto_detect`, returns `{created, profile, …}`. Web
+  panel: no profile → "creates `ac_rally`"; exists → radio "New `ac_rally-2`" /
+  "Update `ac_rally`". Activates the result.
+- **AC Rally action names split** — `CycleLights` → "Cycle Lights" (readable +
+  the label-glyph matcher can hit); added rally-vocab glyph hints (`cycle
+  lights`→headlights_auto, `gear up/down`→shift, `respawn`→refresh, tc/abs, …).
+- **profile ↔ game association** — a profile carries an optional `game:` field
+  (`Profile.game`, set by import; `/api/profiles` returns a `games` map). The
+  page strip has a **🎮 &lt;game&gt;** chip (name only) to link/unlink; the
+  **capability** (`read + write` LMU / `import only` AC Rally / `no import yet`
+  AC EVO) shows as a tag in the Profiles panel row. The editor's "bind this
+  button in &lt;game&gt;" tool keys off the link (falls back to profile name /
+  `<game>-N`) and shows only for `can_write` games. `/api/games` gained
+  `can_read`; `find_ac_evo()` added so AC EVO is a linkable (read-only) game.
+- **delete the active profile** — no longer blocked; the daemon falls back to
+  the home profile (`active_profile` repointed + forced override cleared). Only
+  the home profile itself is protected. `DELETE /api/profiles/<n>` returns
+  `{active}`.
+- **"New profile" → blank or import** — the ＋ New profile control (rail + the
+  Profiles panel) expands to a name field *and* an "⇩ import from a game…"
+  button (uses `mousedown` so the input's blur doesn't eat the click).
+- **import → straight to the profile** — a clean import closes the drawer, shows
+  a toast, and activates the new/updated profile. Only an import with unmatched
+  buttons keeps the panel open (you need to see them).
+- **daemon:** queued profile/page switches (`/api/activate`, `/api/page`) now
+  apply even while the deck is disconnected (were stuck behind the device-poll
+  branch) — the web UI stays usable during a reconnect.
+- **writer — next.** Rebinding means changing a HardwareKey FString (e.g.
+  `None` 5 bytes → 39 bytes), which shifts the file and breaks the enclosing
+  UE property `Size` fields. Needs a real (minimal) GVAS property parser to
+  find + fix those sizes, or a vendored single-file GVAS lib. Format quirks
+  seen: property tag looks like `Name·Type·i32·i32(Size)·u8(guidFlag)·value`
+  but StructProperty/GameplayTag nesting differs — needs proper decode, not
+  byte-poking.
+
+### AC EVO importer — separate, harder
+- AC EVO controls are an **undocumented binary protobuf**
+  (`Saved Games/ACE/input_devices.inputdeviceconfiguration`); `protoc
+  --decode_raw` reads structure but the field→action map needs RE. Lower
+  priority than AC Rally now that Rally turned out to be tractable GVAS.
 
 ### Phase — native KDE app
 - PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon
@@ -192,7 +260,9 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   icons. Deferred from the icon editor (picker didn't need it).
 - Visual icon editor phase 3–4 — canvas drag for layer anchors; fold the
   stopgap `<dialog>` into the docked panel. (backend + form done.)
-- AC EVO importer (needs a sample of its control-config file — not installed here)
+- AC EVO importer — see "AC EVO importer — separate, harder" under Next up
+  (undocumented binary protobuf; AC Rally turned out to be a *different*,
+  tractable format so they no longer share a path).
 - Profile export / import (share a setup as a file)
 - "Test" button in the editor — pulse a gamepad button to check it fires
 - `d200x-button-box` CLI subcommands that hit the API (activate / page / state)

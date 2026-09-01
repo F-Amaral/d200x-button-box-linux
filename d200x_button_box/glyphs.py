@@ -149,6 +149,15 @@ _LABEL_HINTS = [
     ("hud", "hud"), ("gps", "gps"), ("airbag", "airbag"), ("horn", "horn"),
     ("pit limit", "speed"), ("pit speed", "speed"), ("pit", "flag"),
     ("warning", "warning"), ("alert", "alert"), ("info", "info"),
+    # rally / AC Rally action vocab (names are split "CamelCase" -> "Camel Case")
+    ("cycle lights", "headlights_auto"), ("lights", "position_lights"),
+    ("gear up", "shift_up"), ("gear down", "shift_down"), ("gear r", "gearbox"),
+    ("start stop engine", "engine_start"), ("start engine", "engine_start"),
+    ("cycle camera", "eye"), ("camera", "eye"),
+    ("respawn", "refresh"), ("reset car", "refresh"), ("recover", "refresh"),
+    ("increase tc", "tc"), ("decrease tc", "tc"),
+    ("increase abs", "abs"), ("decrease abs", "abs"),
+    ("left indicator", "turn"), ("right indicator", "turn"),
     # media / comms (Material)
     ("play", "media_play"), ("pause", "media_pause"), ("next track", "media_next"),
     ("prev track", "media_prev"), ("radio", "radio"),

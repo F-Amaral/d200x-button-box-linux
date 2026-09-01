@@ -15,6 +15,9 @@ class FakeStore:
         self.active_name = "default"
         self._forced_profile = None
 
+    def force_profile(self, name):
+        self._forced_profile = name
+
 
 class FakeDaemon:
     def __init__(self, settings):
@@ -137,10 +140,45 @@ def test_profile_rename_and_duplicate(client):
     assert status == 404
 
 
+def test_delete_active_profile_falls_back_to_home(client):
+    call, daemon = client
+    from d200x_button_box import config
+    call("POST", "/api/profiles/gone")
+    s = config.Settings.load()
+    s.active_profile = "gone"
+    s.save()
+    daemon.settings = s
+    daemon.store._forced_profile = "gone"
+
+    status, r = call("DELETE", "/api/profiles/gone")
+    assert status == 200
+    assert r["active"] == s.home.profile
+    assert config.Settings.load().active_profile == s.home.profile
+    assert daemon.store._forced_profile is None
+    assert "gone" not in config.list_profiles()
+
+    # the home profile itself is protected
+    home = config.Settings.load().home.profile
+    status, r = call("DELETE", f"/api/profiles/{home}")
+    assert status == 409 and home in config.list_profiles()
+
+
+def test_profile_game_field_roundtrips(client):
+    call, _ = client
+    call("POST", "/api/profiles/withgame")
+    call("PUT", "/api/profiles/withgame", {"game": "ac_rally", "keys": {"0": {"gamepad": 1}}})
+    from d200x_button_box import config
+    assert config.load_profile("withgame").game == "ac_rally"
+    status, prof = call("GET", "/api/profiles/withgame")
+    assert prof["game"] == "ac_rally"
+
+
 def test_games_endpoint(client):
     call, _ = client
     status, games = call("GET", "/api/games")
     assert status == 200 and "lmu" in games and "path" in games["lmu"]
+    assert games["lmu"]["can_read"] and games["lmu"]["can_write"]
+    assert games["ac_rally"]["can_read"] and not games["ac_rally"]["can_write"]
 
 
 def test_glyphs_endpoint(client):
@@ -167,8 +205,15 @@ def test_import_endpoint(client, tmp_path):
     status, rep = call("POST", "/api/profiles/default/import", {"game": "lmu", "path": str(lmu)})
     assert status == 200
     assert rep["applied"] == {"1": "Headlights"}
+    assert rep["created"] is False
     assert config.load_profile("default").page(0).keys[0]["label"] == "Headlights"
     assert ("reload",) in daemon.calls
+
+    # importing into a name that doesn't exist creates it from the stable map
+    status, rep = call("POST", "/api/profiles/lmu-2/import", {"game": "lmu", "path": str(lmu)})
+    assert status == 200 and rep["created"] is True and rep["profile"] == "lmu-2"
+    assert "lmu-2" in config.list_profiles()
+    assert config.load_profile("lmu-2").page(0).keys[0]["label"] == "Headlights"
 
 
 def test_activate_and_page(client):

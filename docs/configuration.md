@@ -101,6 +101,11 @@ pages:
 
 Switching profiles resets to page 0.
 
+An optional top-level `game:` field links the profile to a game (set by "Import
+from a game"; editable via the 🎮 chip under the deck). It drives the editor's
+bind-to-game tool. Deleting the active profile is allowed — the deck falls back
+to the home profile; only the home profile itself can't be deleted.
+
 ## Bindings
 
 Each key/knob-event binding has exactly one action:
@@ -256,19 +261,25 @@ keys:
 When you launch a game, `auto_detect` switches to its profile on its own; on
 quit it falls back to `launcher`.
 
-## Import labels from a game
+## Import a profile from a game
 
-If you bound the **D200x Button Box** controller inside a game and don't
-remember which button is what, "Import from game" in the web UI (or
-`POST /api/profiles/<name>/import`) reads the game's own control config and
-writes the in-game control name into the `label` of every key / knob binding
-that uses that gamepad button.
+"Import from a game" in the web UI (or `POST /api/profiles/<name>/import`)
+reads the game's own control config and builds a deck profile *for that game*:
+every deck key bound to the **D200x Button Box** controller in the game gets
+that in-game control name as its `label`.
 
-- **Le Mans Ultimate** — reads `UserData/player/direct input.json`. The install
-  folder is `games.lmu` in settings (auto-detected from Steam libraries).
+- If no profile named after the game exists yet, it is **created** from the
+  stable gamepad-button map, and `settings.games` / `auto_detect` are seeded so
+  the daemon switches to it when the game runs.
+- If one exists, the panel offers **Update it** or **New profile `<game>-2`**.
+- **Le Mans Ultimate** — reads `UserData/player/direct input.json` (`games.lmu`,
+  auto-detected from Steam libraries).
+- **Assetto Corsa Rally** — reads the UE5 SaveGame
+  `…/compatdata/<appid>/pfx/…/AppData/Local/acr/Saved/SaveGames/EnhancedInputUserSettings.sav`
+  (auto-located). Read-only for now (no bind-to-game yet).
 - Buttons bound in-game that aren't on any deck control are listed in the
   import report so you can assign them.
-- `overwrite: false` keeps labels you typed by hand.
+- `overwrite: false` keeps labels you typed by hand (only matters when updating).
 
 ## Bind-to-game (the reverse)
 

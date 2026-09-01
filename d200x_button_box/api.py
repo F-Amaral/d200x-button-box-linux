@@ -188,10 +188,12 @@ class Handler(BaseHTTPRequestHandler):
             from . import gameimport
 
             found = gameimport.available_games()
-            merged = {g: {"path": d.settings.games.get(g) or info["path"], "can_write": info.get("can_write", False)}
+            merged = {g: {"path": d.settings.games.get(g) or info["path"],
+                          "can_read": info.get("can_read", False),
+                          "can_write": info.get("can_write", False)}
                       for g, info in found.items()}
             for g, p in d.settings.games.items():
-                merged.setdefault(g, {"path": p, "can_write": False})
+                merged.setdefault(g, {"path": p, "can_read": False, "can_write": False})
             return self._json(merged)
 
         if len(seg) == 3 and seg[0] == "games" and seg[2] == "controls" and method == "GET":
@@ -218,7 +220,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(gameimport.game_bind(game, path, control, button))
 
         if seg == ["profiles"] and method == "GET":
-            return self._json({"profiles": config.list_profiles(), "active": d.store.active_name})
+            names = config.list_profiles()
+            games = {}
+            for n in names:
+                try:
+                    g = config.load_profile(n).game
+                    if g:
+                        games[n] = g
+                except Exception:  # noqa: BLE001
+                    pass
+            return self._json({"profiles": names, "active": d.store.active_name, "games": games})
 
         if len(seg) == 3 and seg[0] == "profiles" and seg[2] == "import" and method == "POST":
             from . import gameimport
@@ -228,14 +239,25 @@ class Handler(BaseHTTPRequestHandler):
             path = body.get("path") or d.settings.games.get(game) or (gameimport.available_games().get(game) or {}).get("path")
             if not path:
                 return self._json({"error": f"no install path for {game}"}, 400)
-            if name not in config.list_profiles():
-                raise FileNotFoundError(name)
-            prof = config.load_profile(name)
+            created = name not in config.list_profiles()
+            prof = config.default_profile(name) if created else config.load_profile(name)
             report = gameimport.apply_labels(
                 prof, gameimport.import_game(game, path), overwrite=body.get("overwrite", True))
+            if created:
+                # a new game profile carries only what the game actually binds
+                keep = {int(b) for b in (*report["applied"], *report["skipped"])}
+                gameimport.prune_to_buttons(prof, keep)
+            prof.game = game
             config.save_profile(prof)
+            if created:
+                s = d.settings
+                s.games.setdefault(game, str(path))
+                # canonical "<game>" profile also gets the auto-detect rule
+                if name == game and game not in s.auto_detect and gameimport.DETECT_HINTS.get(game):
+                    s.auto_detect[name] = list(gameimport.DETECT_HINTS[game])
+                s.save()
             d.request_reload()
-            return self._json(report)
+            return self._json({**report, "created": created, "profile": name})
 
         if len(seg) == 3 and seg[0] == "profiles" and seg[2] in ("rename", "duplicate") and method == "POST":
             old, action = seg[1], seg[2]
@@ -284,10 +306,19 @@ class Handler(BaseHTTPRequestHandler):
                         config.save_profile(config.default_profile(name))
                 return self._json({"ok": True, "created": True})
             if method == "DELETE":
+                s = d.settings
+                if name == s.home.profile:
+                    return self._json({"error": "the home profile can't be deleted"}, 409)
                 ok = config.delete_profile(name)
+                if ok:
+                    if s.active_profile == name:
+                        s.active_profile = s.home.profile   # fall back to home
+                        s.save()
+                    if getattr(d.store, "_forced_profile", None) == name:
+                        d.store.force_profile(None)
                 config.gc_icons()
                 d.request_reload()
-                return self._json({"ok": ok})
+                return self._json({"ok": ok, "active": s.active_profile})
 
         if seg == ["icon-preview"] and method == "GET":
             from . import glyphs, layout
