@@ -142,6 +142,13 @@ this page"** / **"Default look — sim keys / box keys"**, each with a live
 preview and one line: *"the frame and colours every auto-generated icon starts
 from; a key can override it."*
 
+**Note — bind-in-game is gamepad-only by nature.** The "bind this button in
+&lt;game&gt;" row writes the game's *controller* config (`Input[control] =
+{device, id}`). A `command` binding is not a game input at all; a `key` binding
+would need the game's *keyboard*-binding format, which is a different structure
+the LMU writer doesn't touch. Extending bind-in-game to those was dropped, not
+deferred.
+
 ### 4.2 Profiles
 
 A **Profiles** drawer (opened from the profile name in the header):
@@ -258,9 +265,14 @@ sim/box registers, autosave + status pill, `<img>` cache. Dialogs unchanged.
   edits that don't change any icon no longer blank the screens); after a real
   push the clock heartbeat fires on the next tick instead of up to 2 s later;
   web autosave debounce 500 → 800 ms.
-- **still open:** `More` disclosure (move style-override, `hold:`, bind-in-game
-  there; bind-in-game for `key`/`command` too). `settings.icon.game/.nav` has
-  no UI at all yet — belongs with the Settings panel in phase 3.
+- **"More" disclosure ✅** (post-phase-3) — a `<details class="more">` under the
+  Look group holds the per-key **long-press action** (`kb.hold`): a checkbox
+  enables it, a nested `actionBlock` edits it, the deck cell shows "＋hold".
+  Style-override and bind-in-game stay inline in the Look field / Action block —
+  they're contextual there and moving them would cost more than it saves.
+  bind-in-game for `key`/`command` **dropped**: a `command` is not a game input,
+  and a `key` binding would need the game's *keyboard*-binding format (not the
+  controller config the LMU writer touches) — see §4 note.
 - `compose` `text`/`circle`/`rect` layers — not needed for the picker; deferred
   to phase 4.
 
@@ -326,10 +338,18 @@ sim/box registers, autosave + status pill, `<img>` cache. Dialogs unchanged.
   colour); the default-look dialog reads the *current* page style (was showing
   defaults), its buttons read "Apply" / "Reset to app default", and its note
   says dashboard symbols only take the icon colour.
-- **still open:** `settings.icon.game/.nav` "default look" editors (no UI yet);
-  auto-detect "this profile is for <game>" chips; the phase-2 `More` disclosure;
-  Switching section could move to the rail (user undecided); live key colour
-  from telemetry (roadmap backlog).
+- **default-look editors ✅** (post-phase-3) — Settings panel "Default look"
+  section: **Sim keys** / **Box keys** rows, each a live preview + Edit that
+  opens the icon-style dialog on `settings.icon.game` / `.nav` (baseline = app
+  default, "Reset to app default" clears the override). Applied on Save settings;
+  the deck preview follows live. `mergedStyle` / `openFrame` now merge
+  `settings.icon.nav` for box keys too (was hard-coded to the app default).
+- **auto-detect chips ✅** (post-phase-3) — each profile row in the Profiles
+  panel has "auto-activate when a running process matches:" — removable chips +
+  a free-text add, writing `settings.auto_detect[profile]`, auto-saved. The raw
+  "process name contains…" escape hatch is just the chip text itself.
+- still open: Switching section could move to the rail (user undecided); live
+  key colour from telemetry (roadmap backlog).
 
 **Phase 4 — polish (done).**
 - no-flash deck icons ✅ — one `<img>` per key id kept across re-renders; a

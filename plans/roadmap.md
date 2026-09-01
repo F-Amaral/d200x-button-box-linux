@@ -153,15 +153,26 @@ deliberately skipped), Ctrl-Z undo + toast, first-run overlay, persistent
 encoder/aux hints, deck keyboard nav + focus rings, drag a key's binding onto
 another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
 
+### Frontend — phases 2–3 leftovers DONE (see plans/frontend.md §9)
+- `settings.icon.game` / `.nav` **default-look editor** — Settings panel "Default
+  look" section, two rows (Sim / Box keys) each a live preview + Edit that reuses
+  the icon-style dialog; `mergedStyle` / `openFrame` now honour `icon.nav` too.
+- per-profile **auto-detect chips** — Profiles panel: "auto-activate when a
+  running process matches:" removable chips + free-text add per profile, writes
+  `settings.auto_detect`, auto-saves.
+- editor **"More" disclosure** — per-key long-press action (`kb.hold`) editor
+  (checkbox + nested `actionBlock`); deck cell shows "＋hold". Style override /
+  bind-in-game stay inline (contextual, kept where they are).
+- bind-in-game for `key` / `command` — **dropped** (a `command` isn't a game
+  input; `key` would need the game's *keyboard*-binding format, not the
+  controller config — see plans/frontend.md §4 note).
+
 ## Next up
 
-### Frontend — still open from phases 2–3
-- `More` disclosure in the editor: fold away per-key style override, `hold:`,
-  bind-in-game
-- **bind-in-game for `key` / `command` actions** (only `gamepad` has it now)
-- `settings.icon.game` / `.nav` "default look" editor — **no UI at all yet**
-- Profiles panel: "auto-activate for &lt;game&gt;" chips (today `auto_detect` is
-  raw-edited in Settings)
+### AC Rally support
+- process detection + a starter profile + control-config importer for Assetto
+  Corsa Rally (Kunos, separate title from AC EVO). Needs a sample of its
+  bindings file — same evidence-gated path as the LMU importer.
 
 ### Phase — native KDE app
 - PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon

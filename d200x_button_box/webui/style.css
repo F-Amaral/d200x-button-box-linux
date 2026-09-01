@@ -415,3 +415,21 @@ dialog h3 { margin: 0 0 var(--sp-4); font-size: var(--fs-md); }
 .introcard h2 { font-size: var(--fs-lg); margin-bottom: var(--sp-2); }
 .introcard p { color: var(--text-dim); margin: 0 0 var(--sp-4); }
 .introacts { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* default-look rows (Settings) */
+.lookmini { border: 1px solid var(--line); border-radius: 6px; background: #10131a; object-fit: contain; }
+
+/* per-profile auto-detect chips (Profiles panel) */
+.autorow { padding: 4px 0 10px; border-bottom: 1px solid var(--line); margin-bottom: var(--sp-2); }
+.autolbl { font-size: var(--fs-xs); color: var(--text-dim); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: var(--fs-xs); padding: 2px 4px 2px 8px;
+  border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface-2);
+}
+.chip button { border: 0; background: transparent; color: var(--text-dim); padding: 0 2px; font-size: 11px; }
+.chip button:hover { color: var(--danger); }
+.chipadd { font-size: var(--fs-xs); padding: 2px 8px; min-width: 8rem; }
+
+.inlinechk { display: flex; gap: var(--sp-2); align-items: center; font-size: var(--fs-xs); color: var(--text-dim); margin: var(--sp-2) 0; }

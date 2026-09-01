@@ -65,12 +65,21 @@ function normalize(name, raw) {
   const pg = raw.pages ? raw.pages.map(mk) : [mk(raw)];
   return { name, pages: pg.length ? pg : [mk({})] };
 }
+// drop an empty hold:{} (checkbox on, no action picked yet) without touching the live model
+function cleanKey(b) {
+  if (b && b.hold && typeof b.hold === "object" && !Array.isArray(b.hold) && !Object.keys(b.hold).length) {
+    const { hold, ...rest } = b;
+    return rest;
+  }
+  return b;
+}
 function serialize() {
   const p = S.profile;
   const dump = g => ({
     ...(g.name ? { name: g.name } : {}),
     ...(g.style && Object.keys(g.style).length ? { style: g.style } : {}),
-    keys: g.keys, knobs: g.knobs,
+    keys: Object.fromEntries(Object.entries(g.keys).map(([k, v]) => [k, cleanKey(v)])),
+    knobs: g.knobs,
   });
   return (p.pages.length === 1 && !p.pages[0].name && !Object.keys(p.pages[0].style || {}).length)
     ? dump(p.pages[0]) : { pages: p.pages.map(dump) };
@@ -309,7 +318,7 @@ function shortVal(b) {
 }
 function mergedStyle(b) {
   const base = registerOf(b) === "box"
-    ? NAV_BASE
+    ? Object.assign({}, NAV_BASE, S.settings?.icon?.nav)
     : Object.assign({}, GAME_BASE, S.settings?.icon?.game, curPage().style);
   return Object.assign({}, base, b.icon_style || {});
 }
@@ -397,6 +406,8 @@ function cellFor(id, cls) {
     else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id), title: b.label || "" }));
   }
   let v = explicit ? shortVal(b) : (navCfg ? navRoleText(navCfg) : "");
+  if (explicit && b.hold && typeof b.hold === "object" && Object.keys(b.hold).length)
+    v += (v ? " · " : "") + "＋hold";
   if (!v && (id === AUX_L || id === AUX_R)) v = "round button · set in Navigation";
   if (v) c.append(el("div", { class: "v", textContent: v, title: v }));
   c.onclick = () => selectControl("key", id);
@@ -647,9 +658,30 @@ function lookField(kb, index) {
   paint();
   return grp;
 }
+// "More" — a long-press action on a screen key (tap fires the main binding,
+// hold fires kb.hold). The daemon reads binding["hold"] for any key.
+function holdBlock(kb) {
+  const has = kb.hold && typeof kb.hold === "object" && !Array.isArray(kb.hold);
+  const more = el("details", { class: "more" });
+  more.open = has;
+  more.append(el("summary", { textContent: "More — long-press action" }));
+  const ms = S.settings?.hold_ms ?? 500;
+  const chk = el("input", { type: "checkbox", checked: !!has });
+  chk.onchange = () => {
+    if (chk.checked) kb.hold = kb.hold || {}; else delete kb.hold;
+    renderEditor(); renderDeck(); touched();
+  };
+  more.append(el("label", { class: "inlinechk" }, [chk, `Different action on a long press (${ms} ms)`]));
+  if (has) {
+    const g = el("div", { class: "grp" }, [el("h3", { textContent: "On long press" })]);
+    g.append(actionBlock(kb.hold, () => { renderDeck(); touched(); }));
+    more.append(g);
+  }
+  return more;
+}
 function openFrame(kb, mode) {
   const baseline = registerOf(kb) === "box"
-    ? NAV_BASE
+    ? Object.assign({}, NAV_BASE, S.settings?.icon?.nav)
     : Object.assign({}, GAME_BASE, S.settings?.icon?.game, curPage().style);
   // preview what the key actually shows on the device
   const textMode = mode === "letters" || mode === "image";
@@ -810,6 +842,7 @@ function renderEditor() {
       if (cur === "off") e.append(lookField(kb, index));
     } else {
       e.append(lookField(kb, index));
+      e.append(holdBlock(kb));
     }
   } else {
     for (const sub of ["left", "right", "press"]) {
@@ -927,6 +960,34 @@ function newProfileButton(cls) {
   return btn;
 }
 
+// per-profile auto-detect: process-name substrings that make the daemon switch to it
+function autoRow(profile) {
+  const ad = (S.settings.auto_detect ||= {});
+  const needles = ad[profile] || [];
+  const wrap = el("div", { class: "autorow" });
+  wrap.append(el("span", { class: "autolbl", textContent: "auto-activate when a running process matches:" }));
+  const chips = el("div", { class: "chips" });
+  const commit = list => {
+    if (list.length) ad[profile] = list; else delete ad[profile];
+    saveSettings().then(() => renderChrome());
+  };
+  needles.forEach((tok, i) => {
+    const x = Object.assign(el("button", { textContent: "✕", title: "remove" }), {
+      onclick: () => commit(needles.filter((_, j) => j !== i)),
+    });
+    chips.append(el("span", { class: "chip" }, [tok, x]));
+  });
+  const add = el("input", { class: "chipadd", placeholder: needles.length ? "+ another" : "+ e.g. LeMansUltimate" });
+  add.onkeydown = e => {
+    if (e.key !== "Enter") return;
+    const v = add.value.trim();
+    if (v && !needles.includes(v)) commit([...needles, v]);
+  };
+  chips.append(add);
+  wrap.append(chips);
+  return wrap;
+}
+
 // -- Profiles drawer panel (full management) --
 function buildProfiles(body) {
   body.append(el("p", { class: "concept", html:
@@ -953,6 +1014,7 @@ function buildProfiles(body) {
       acts.append(btn("delete", () => { if (confirm("Delete profile “" + n + "”?")) PROF.remove(n); }, true));
     row.append(acts);
     list.append(row);
+    list.append(autoRow(n));
   }
   list.append(el("div", { style: "margin-top:.6rem" }, [newProfileButton()]));
   body.append(list);
@@ -1051,6 +1113,33 @@ function buildSettings(body) {
     el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to this profile from anywhere, then returns to auto-detect after the idle timeout." }),
     fld("Home profile", homeProf),
     fld("Return after", revert, "idle seconds before going back to auto-detect (0 = stay)")));
+
+  const lookRow = (kind, glyph) => {
+    const app = kind === "nav" ? NAV_BASE : GAME_BASE;
+    const cur = (s.icon && s.icon[kind]) || {};
+    const q = new URLSearchParams(Object.assign({}, app, cur)); q.set("glyph", glyph);
+    const prev = el("img", { src: "api/icon-preview?" + q, width: 42, height: 42, class: "lookmini" });
+    const edit = Object.assign(el("button", { class: "ghost", textContent: "Edit" }), {
+      onclick: () => openIconStyle({}, out => {
+        s.icon = s.icon || {};
+        if (Object.keys(out).length) s.icon[kind] = out; else delete s.icon[kind];
+        renderDeck(); openDrawer("settings");   // live preview + refresh the row
+      }, kind === "nav" ? "Default look — box keys" : "Default look — sim keys", {
+        noText: true, glyph, baseline: app, style: cur,
+        saveLabel: "Apply", clearLabel: "Reset to app default",
+        note: "The frame + colours every auto-generated icon on a "
+          + (kind === "nav" ? "box (nav / profile / command)" : "sim (controller)")
+          + " key starts from. Pages and individual keys still override it.",
+      }),
+    });
+    return fld(kind === "nav" ? "Box keys" : "Sim keys",
+      el("span", { style: "display:flex;gap:.6rem;align-items:center" }, [prev, edit]));
+  };
+  body.append(section("Default look",
+    el("p", { class: "hint", textContent: "Baseline for auto-generated icons — blue circle = sim control, grey rounded square = box control. Applied on Save settings." }),
+    lookRow("game", "local_gas_station"),
+    lookRow("nav", "layers")));
+
   body.append(section("Connection",
     el("p", { class: "hint", html: "API host / port / token: edit <code>settings.yaml</code> and restart the daemon." })));
 
