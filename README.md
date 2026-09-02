@@ -5,8 +5,6 @@ racing on Linux. The daemon reads the deck over USB-HID and re-emits every key,
 aux button and encoder as a **virtual gamepad** (`uinput`), so any game — native
 or Proton/Wine — sees an ordinary controller you can bind.
 
-Built for *Le Mans Ultimate*, *Assetto Corsa EVO* and *Assetto Corsa Rally*, in VR.
-
 > ⚠️ **Vibe-coded.** This entire repository was written through LLM-assisted
 > "vibe coding" — exploratory, prompt-driven, with the hardware in the loop.
 > It works on the author's setup but has had no formal review. Read the code
