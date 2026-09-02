@@ -257,6 +257,10 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   the deck slot's **canonical button** (the stable `default_profile` map: LCD
   key i → i+1, status → 14, encoder subs → 17..25). Shown as text with an
   "override" link for the rare custom case. Stops two keys colliding on button 1.
+- **multi-page canonical buttons** — LCD keys on page P now default to
+  `P*13 + i + 1` (page 1 → 14..26, …) so page 2's keys don't reuse page 1's
+  buttons. Status + encoders stay shared across pages. (Past ~3 pages on a
+  40-button pad they can overlap the encoder range — override then.)
 - **bind-in-game closes the loop** — a successful bind also labels the deck key
   (`niceControl(action)`) if it has no manual label, so the tell-tale
   auto-detect kicks in. CamelCase action names shown split.
@@ -286,25 +290,29 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   actions (all extracted); other menu categories live in the game's `.pak`
   default mapping contexts, not in a rebindable save.
 
-### AC EVO importer — DONE (reader)
+### AC EVO importer + writer — DONE
 - AC EVO is Kunos' own engine (not UE). Controls: `compatdata/3058630/pfx/…/
   Saved Games/ACE/input_devices.inputdeviceconfiguration`, a length-delimited
-  **protobuf** (no schema). `games/ac_evo.py` has a ~40-line varint/LD reader:
-  `File{ Device devices=1 }`, `Device{ Ident=1, Mapping mappings=2 }`,
+  **protobuf** (no schema). `games/ac_evo.py` has a small varint/LD reader **and
+  writer**, no dep. `File{ Device devices=1 }`,
+  `Device{ Ident=1, Mapping mappings=2 }`,
   `Mapping{ Control=1 (id in 1/5, dir in 3), button0 uint32=2 }`.
-- **The field roles were the reverse of my first guess**: `Control.id` is the
-  game's stable control id (per in-game action); `Mapping.button0` is the 0-based
-  gamepad button (**omitted when 0** = proto default = button 1); `Control.dir`
-  1/2 = the -/+ half of a bipolar "cycle" control. The "action drift" I saw was
-  just `button0` changing as a binding moved between buttons.
-- `read()` verified against the user's real file: all 12 bindings correct,
-  **including the bipolar Cycle Lights +/-**. `_CONTROL_IDS` map has 13 entries
-  (indicators, hazards, flashing, ignition, starter, horn, ERS, DRS, HUD, reset,
-  nameplate, cycle lights); unknown ids still label the button as `control N`.
-  Registered, `can_read: true`, in the import dropdown.
-- Writer feasible (append/modify a `Mapping` in the device block, re-serialize
-  the device) — not done; needs a careful pass + the user confirming the game
-  accepts the rewritten file.
+- **Field roles (reverse of the first guess)**: `Control.id` = the game's stable
+  control id (per in-game action); `Mapping.button0` = 0-based gamepad button
+  (**omitted when 0** = button 1); `Control.dir` 1/2 = the -/+ half of a bipolar
+  "cycle" control. The "action drift" seen earlier was just `button0` moving with
+  the binding.
+- `read()` verified against the real file: all 12 bindings correct, **incl. the
+  bipolar Cycle Lights +/-**. `_CONTROL_IDS` = 13 named controls; unknown ids
+  still label the button `control N`.
+- `write()` splices **only our device's mapping list** — every other device and
+  mapping is kept byte-for-byte, a no-op write is a 0-byte diff. Reuses the
+  existing `Control` bytes on a rebind. Only the 13 named controls are writable.
+  Backup `.d200x-bak`; the API refuses while AC EVO runs (it rewrites this file
+  live). **Not yet confirmed the game accepts a d200x-written file** — the user
+  had AC EVO open during testing.
+- To fill `_CONTROL_IDS` / make everything writable: a systematic pass (bind
+  every menu control to a distinct deck button, then `read` it back).
 
 ### Phase — native KDE app
 - PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon

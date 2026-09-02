@@ -14,6 +14,11 @@ button0` is the 0-based gamepad button, omitted when 0 (proto default) -> button
 The product-guid encodes PID+VID: `{<PID:04X><VID:04X>-0000-0000-0000-PIDVID}`;
 our virtual pad (gamepad.py vendor 0x1209 product 0xD200) is
 `{D2001209-0000-0000-0000-504944564944}`.
+
+`write()` splices only our device's mapping list -- every other device and
+mapping is kept byte-for-byte -- and can rebind the named controls (`_CONTROL_
+IDS`). Unnamed controls can't be written (no id known); import them back after
+binding in-game.
 """
 
 from __future__ import annotations
@@ -97,47 +102,156 @@ def _cfg_path(path: str | Path) -> Path:
     raise FileNotFoundError(f"input_devices.inputdeviceconfiguration not found under {path}")
 
 
-def read(path: str | Path) -> dict[int, list[str]]:
-    """{gamepad button (1-based) -> [in-game action names]} bound to our device."""
+# --- minimal protobuf *writer* (varint + length-delimited only) ------------- #
+def _vb(n: int) -> bytes:
+    out = b""
+    while True:
+        b, n = n & 0x7F, n >> 7
+        out += bytes([b | (0x80 if n else 0)])
+        if not n:
+            return out
+
+
+def _fv(fn: int, val: int) -> bytes:                 # varint field
+    return _vb(fn << 3) + _vb(val)
+
+
+def _fb(fn: int, payload: bytes) -> bytes:            # length-delimited field
+    return _vb((fn << 3) | 2) + _vb(len(payload)) + payload
+
+
+def _control_bytes(m: bytes) -> bytes | None:
+    """The Control sub-message's value bytes from one Mapping's value bytes."""
+    for f, w, v, _n in _fields(m, 0, len(m)):
+        if f == 1 and w == 2:
+            return v
+    return None
+
+
+def _mapping_control(m: bytes):
+    """(control_id, direction, button0) of one Mapping's value bytes."""
+    cid = direction = None
+    button0 = 0
+    ctl = _control_bytes(m)
+    if ctl is not None:
+        for f5, _w5, v5, _n5 in _fields(ctl, 0, len(ctl)):
+            if f5 == 1:
+                cid = v5
+            elif f5 == 3:
+                direction = v5
+    for f, w, v, _n in _fields(m, 0, len(m)):
+        if f == 2 and w == 0:
+            button0 = v
+    return cid, direction, button0
+
+
+def _split_device(dev: bytes):
+    """(non-mapping fields re-serialised, [Mapping value bytes], is_ours)."""
+    keep = b""
+    mappings: list[bytes] = []
+    is_ours = False
+    for f, w, v, _n in _fields(dev, 0, len(dev)):
+        if f == 2 and w == 2:
+            mappings.append(v)
+        elif w == 2:
+            keep += _fb(f, v)
+            if f == 1:
+                for f3, w3, v3, _n3 in _fields(v, 0, len(v)):
+                    if f3 == 5 and w3 == 2 and v3.decode("latin1", "ignore") == _DECK_GUID:
+                        is_ours = True
+        else:
+            keep += _fv(f, v)
+    return keep, mappings, is_ours
+
+
+def _our_mappings(path: str | Path):
     data = _cfg_path(path).read_bytes()
-    result: dict[int, list[str]] = {}
     for fn, _wt, dev, _ni in _fields(data, 0, len(data)):
         if fn != 1:
             continue
-        is_ours = False
-        rows = []
-        for f2, _w2, v2, _n2 in _fields(dev, 0, len(dev)):
-            if f2 == 1:  # ident
-                for f3, w3, v3, _n3 in _fields(v2, 0, len(v2)):
-                    if f3 == 5 and w3 == 2 and v3.decode("latin1", "ignore") == _DECK_GUID:
-                        is_ours = True
-            elif f2 == 2:  # a mapping
-                cid = direction = None
-                button0 = 0
-                for f4, w4, v4, _n4 in _fields(v2, 0, len(v2)):
-                    if f4 == 1 and w4 == 2:
-                        for f5, _w5, v5, _n5 in _fields(v4, 0, len(v4)):
-                            if f5 == 1:
-                                cid = v5
-                            elif f5 == 3:
-                                direction = v5
-                    elif f4 == 2:
-                        button0 = v4
-                rows.append((cid, direction, button0))
-        if not is_ours:
+        _keep, mappings, is_ours = _split_device(dev)
+        if is_ours:
+            return data, mappings
+    return data, None
+
+
+def read(path: str | Path) -> dict[int, list[str]]:
+    """{gamepad button (1-based) -> [in-game action names]} bound to our device."""
+    _data, mappings = _our_mappings(path)
+    result: dict[int, list[str]] = {}
+    for m in mappings or []:
+        cid, direction, button0 = _mapping_control(m)
+        if cid is None:
             continue
-        for cid, direction, button0 in rows:
-            if cid is None:
-                continue
-            name = _CONTROL_IDS.get(cid, f"control {cid}") + _DIR_SUFFIX.get(direction, "")
-            btn = button0 + 1
-            result.setdefault(btn, [])
-            if name not in result[btn]:
-                result[btn].append(name)
+        name = _CONTROL_IDS.get(cid, f"control {cid}") + _DIR_SUFFIX.get(direction, "")
+        result.setdefault(button0 + 1, [])
+        if name not in result[button0 + 1]:
+            result[button0 + 1].append(name)
     return result
+
+
+_NAME_TO_ID = {v: k for k, v in _CONTROL_IDS.items()}
+
+
+def controls(path: str | Path) -> dict:
+    """Bindable control names + which of our buttons each is currently on."""
+    bound = {names[0]: btn for btn, names in read(path).items() if names[0] in _NAME_TO_ID}
+    return {
+        "controls": list(_CONTROL_IDS.values()),
+        "device_present": True,   # our key names are synthetic; no prior registration needed
+        "bound": bound,
+    }
+
+
+def write(path: str | Path, control: str, button: int | None) -> dict:
+    """Point `control` (a name from `controls()`) at our gamepad `button`
+    (1-based), or clear it (button=None). Splices only our device's mapping
+    list; every other device and mapping is kept byte-for-byte. Game must be
+    closed -- AC EVO reads this file at startup."""
+    cfg = _cfg_path(path)
+    data = cfg.read_bytes()
+    cid = _NAME_TO_ID.get(control)
+    if cid is None:
+        raise ValueError(f"cannot write unnamed control {control!r}")
+
+    out = b""
+    hit = False
+    for fn, _wt, dev, _ni in _fields(data, 0, len(data)):
+        if fn != 1:
+            out += _fv(fn, dev) if isinstance(dev, int) else _fb(fn, dev)
+            continue
+        keep, mappings, is_ours = _split_device(dev)
+        if not is_ours or hit:          # only touch the first block that's ours
+            out += _fb(1, dev)
+            continue
+        hit = True
+        kept = []
+        existing_ctl = None
+        for m in mappings:
+            if _mapping_control(m)[0] == cid:
+                existing_ctl = _control_bytes(m)   # reuse the exact Control bytes on a rebind
+            else:
+                kept.append(m)                     # every other mapping stays byte-for-byte
+        if button is not None:
+            ctl = existing_ctl if existing_ctl is not None else _fv(1, cid) + _fv(2, 1) + _fv(5, cid)
+            mapping = _fb(1, ctl) + (_fv(2, button - 1) if button > 1 else b"")
+            kept.append(mapping)
+        out += _fb(1, keep + b"".join(_fb(2, m) for m in kept))
+
+    if not hit:
+        raise ValueError(
+            "the D200x Button Box is not in AC EVO's config yet -- bind any one "
+            "control to it in-game once first")
+
+    backup = cfg.with_suffix(cfg.suffix + ".d200x-bak")
+    if not backup.exists():
+        backup.write_bytes(data)
+    cfg.write_bytes(out)
+    return {"ok": True, "control": control, "button": button, "backup": str(backup)}
 
 
 GAME = Game(
     key="ac_evo", label="AC EVO",
     detect=("AssettoCorsaEVO", "acevo"), find=find, read=read,
+    controls=controls, write=write,
 )

@@ -289,10 +289,11 @@ that in-game control name as its `label`.
 - **Assetto Corsa Rally** — reads the UE5 SaveGame
   `…/compatdata/<appid>/pfx/…/AppData/Local/acr/Saved/SaveGames/EnhancedInputUserSettings.sav`
   (auto-located). Read-only for now (no bind-to-game yet).
-- **Assetto Corsa EVO** — reads `…/compatdata/3058630/pfx/…/Saved Games/ACE/
-  input_devices.inputdeviceconfiguration` (a protobuf). Handles plain and
-  bipolar (cycle +/-) bindings. Read-only. Unrecognised in-game controls still
-  label the button as `control <n>`.
+- **Assetto Corsa EVO** — reads/writes `…/compatdata/3058630/pfx/…/Saved
+  Games/ACE/input_devices.inputdeviceconfiguration` (a protobuf). Handles plain
+  and bipolar (cycle +/-) bindings; unrecognised in-game controls label the
+  button as `control <n>` and can't be written. **Close AC EVO before writing**
+  — it rewrites this file while running.
 - Buttons bound in-game that aren't on any deck control are listed in the
   import report so you can assign them.
 - `overwrite: false` keeps labels you typed by hand (only matters when updating).

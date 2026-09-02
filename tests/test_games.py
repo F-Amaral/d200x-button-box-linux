@@ -14,7 +14,7 @@ def test_registry_and_capabilities():
     av = games.available()
     assert av["lmu"]["can_read"] and av["lmu"]["can_write"]
     assert av["ac_rally"]["can_read"] and av["ac_rally"]["can_write"]
-    assert av["ac_evo"]["can_read"] and not av["ac_evo"]["can_write"]
+    assert av["ac_evo"]["can_read"] and av["ac_evo"]["can_write"]
     assert av["ac_rally"]["label"] == "AC Rally"
 
 
@@ -24,13 +24,21 @@ def test_detect_hints():
     assert "acr.exe" in h["ac_rally"]
 
 
-def test_dispatch_errors_for_missing_capability():
+def test_dispatch_errors(monkeypatch):
     with pytest.raises(ValueError):
-        games.bind("ac_evo", "x", "y", 1)       # no writer
+        games.read("nope", "x")                 # unknown game
     with pytest.raises(ValueError):
-        games.controls("ac_evo", "x")           # no controls lister
+        games.controls("nope", "x")
     with pytest.raises(ValueError):
-        games.controls("nope", "x")             # unknown game
+        games.bind("nope", "x", "y", 1)
+
+    # a game that declares no writer -> dispatch refuses before touching disk
+    from d200x_button_box.games import Game
+    monkeypatch.setitem(games.ALL, "toy", Game(key="toy", label="Toy", read=lambda p: {}))
+    with pytest.raises(ValueError, match="cannot write"):
+        games.bind("toy", "x", "y", 1)
+    with pytest.raises(ValueError, match="cannot list controls"):
+        games.controls("toy", "x")
 
 
 # --- Le Mans Ultimate ---------------------------------------------------------#
@@ -210,7 +218,22 @@ def test_ac_rally_write_splices_hardwarekey(tmp_path):
         ac_rally.write(sav, "NoSuchAction", 1)
 
 
-def test_ac_rally_write_via_dispatch_blocked_for_missing_capability():
-    # ac_evo has no writer
-    with pytest.raises(ValueError):
-        games.bind("ac_evo", "x", "y", 1)
+def test_ac_evo_write_splices_the_device_block(tmp_path):
+    cfg = tmp_path / "input_devices.inputdeviceconfiguration"
+    cfg.write_bytes(_acevo_cfg([
+        (132, None, 2),      # Indicator Left -> button 2
+        (139, None, 6),      # Horn -> button 6
+    ]))
+
+    ac_evo.write(cfg, "Horn", 10)                 # move Horn 6 -> 10
+    assert (tmp_path / "input_devices.inputdeviceconfiguration.d200x-bak").is_file()
+    assert ac_evo.read(cfg) == {2: ["Indicator Left"], 10: ["Horn"]}
+
+    ac_evo.write(cfg, "Ignition", 4)              # new binding
+    assert ac_evo.read(cfg) == {2: ["Indicator Left"], 10: ["Horn"], 4: ["Ignition"]}
+
+    ac_evo.write(cfg, "Horn", None)               # clear
+    assert 10 not in ac_evo.read(cfg)
+
+    with pytest.raises(ValueError, match="unnamed control"):
+        ac_evo.write(cfg, "control 12345", 1)

@@ -461,18 +461,44 @@ function makeDraggable(c, id) {
   }
   c.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; c.classList.add("dragover"); };
   c.ondragleave = () => c.classList.remove("dragover");
-  c.ondrop = e => {
+  c.ondrop = async e => {
     e.preventDefault(); c.classList.remove("dragover");
     const from = Number(e.dataTransfer.getData("text/plain"));
     if (!Number.isInteger(from) || from === id || !DRAG_OK(from)) return;
     const k = curPage().keys, a = k[from], b = k[id];
     if (!a) return;
-    if (b) k[from] = b; else delete k[from];
+    const canon = i => canonicalButton({ kind: "key", index: i });
+    // if a binding still sends its slot's default button, follow it to the new slot
+    const remap = (bind, o, n) => { if (bind && Number(bind.gamepad) === canon(o)) bind.gamepad = canon(n); };
+    remap(a, from, id);
+    if (b) { remap(b, id, from); k[from] = b; } else delete k[from];
     k[id] = a;
     S.sel = { kind: "key", index: id };
     render(); touched();
     toast(b ? "Swapped" : "Moved");
+    // carry the in-game binding(s) along, if the profile is linked to a writable game
+    const pg = profileGame();
+    if (pg && GAMES[pg]?.can_write)
+      await moveGameBinds(pg, b ? [[canon(from), canon(id)], [canon(id), canon(from)]] : [[canon(from), canon(id)]]);
   };
+}
+// rebind whatever in-game control sits on each `from` button to its `to` button
+async function moveGameBinds(game, moves) {
+  const info = await ensureControls(game);
+  if (!info || !info.bound) return;
+  const plan = moves
+    .map(([f, t]) => [Object.entries(info.bound).find(([, x]) => x === f)?.[0], t])
+    .filter(([ctl]) => ctl);
+  if (!plan.length) return;
+  const H = { "content-type": "application/json" };
+  try {
+    for (const [ctl] of plan)   // clear all first so a swap doesn't self-collide
+      await api("games/" + game + "/bind", { method: "POST", headers: H, body: JSON.stringify({ control: ctl, clear: true }) });
+    for (const [ctl, t] of plan)
+      await api("games/" + game + "/bind", { method: "POST", headers: H, body: JSON.stringify({ control: ctl, button: t }) });
+    delete GAME_CONTROLS[game];
+    if (S.sel) renderEditor();
+  } catch (e) { toast(String(e).slice(0, 80)); }
 }
 function renderDeck() {
   const d = $("#deck"); d.innerHTML = "";
@@ -503,12 +529,15 @@ function selectControl(kind, index) {
 }
 
 // the deck sends a fixed gamepad button per key/knob-slot (the stable map in
-// config.default_profile) — every key its own number, so nothing collides.
+// config.default_profile). Encoders + the status key are physical and shared
+// across pages; LCD keys shift by 13 per page so page 2's keys don't reuse
+// page 1's buttons. (Past ~page 3 they can overlap the encoder range on a
+// 40-button pad — override the button then.)
 function canonicalButton(sel, sub) {
   if (!sel) return 1;
   if (sel.kind === "knob") return 17 + KNOBS.indexOf(sel.index) * 3 + { left: 0, right: 1, press: 2 }[sub || "left"];
   if (sel.index === STATUS) return 14;
-  return sel.index + 1;   // LCD keys 0..12 -> buttons 1..13
+  return (S.page || 0) * 13 + sel.index + 1;   // LCD keys: page 0 -> 1..13, page 1 -> 14..26, …
 }
 
 // ---- editor: action block ------------------------------------
@@ -591,7 +620,7 @@ function gameBindRow(game, binding, onChange) {
     const cur = Object.entries(info.bound).find(([, b]) => b === button)?.[0] || "";
     info.controls.forEach(c => sel.append(el("option", { value: c, textContent: niceControl(c), selected: c === cur })));
   });
-  go.onclick = async () => {
+  const apply = async () => {
     const info = GAME_CONTROLS[game] || { bound: {} };
     const prev = Object.entries(info.bound).find(([, b]) => b === button)?.[0];
     const next = sel.value;
@@ -606,6 +635,8 @@ function gameBindRow(game, binding, onChange) {
       if (S.sel) renderEditor();                        // refresh the dropdown / icon
     } catch (e) { msg.textContent = String(e).slice(0, 80); msg.style.color = "var(--danger)"; }
   };
+  go.onclick = apply;
+  sel.onchange = apply;   // autosave is always on -> apply the moment a control is picked
   return wrap;
 }
 
