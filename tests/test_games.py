@@ -6,7 +6,7 @@ import struct
 import pytest
 
 from d200x_button_box import games
-from d200x_button_box.games import ac_rally, lmu
+from d200x_button_box.games import ac_evo, ac_rally, lmu
 
 
 # --- registry / dispatch --------------------------------------------------- #
@@ -14,7 +14,7 @@ def test_registry_and_capabilities():
     av = games.available()
     assert av["lmu"]["can_read"] and av["lmu"]["can_write"]
     assert av["ac_rally"]["can_read"] and av["ac_rally"]["can_write"]
-    assert not av["ac_evo"]["can_read"] and not av["ac_evo"]["can_write"]
+    assert av["ac_evo"]["can_read"] and not av["ac_evo"]["can_write"]
     assert av["ac_rally"]["label"] == "AC Rally"
 
 
@@ -28,7 +28,7 @@ def test_dispatch_errors_for_missing_capability():
     with pytest.raises(ValueError):
         games.bind("ac_evo", "x", "y", 1)       # no writer
     with pytest.raises(ValueError):
-        games.read("ac_evo", "x")               # no importer
+        games.controls("ac_evo", "x")           # no controls lister
     with pytest.raises(ValueError):
         games.controls("nope", "x")             # unknown game
 
@@ -133,6 +133,58 @@ def test_ac_rally_read_accepts_a_directory(tmp_path):
     sav.parent.mkdir(parents=True)
     sav.write_bytes(_acr_sav([("Respawn", "GenericUSBController_Button7_1209_D200")]))
     assert ac_rally.read(tmp_path) == {7: ["Respawn"]}
+
+
+# --- Assetto Corsa EVO (protobuf input_devices.inputdeviceconfiguration) ---- #
+def _pbv(n):                       # varint
+    out = b""
+    while True:
+        b, n = n & 0x7F, n >> 7
+        out += bytes([b | (0x80 if n else 0)])
+        if not n:
+            return out
+
+
+def _pbld(fn, payload):           # length-delimited field
+    return _pbv((fn << 3) | 2) + _pbv(len(payload)) + payload
+
+
+def _pbvi(fn, val):               # varint field
+    return _pbv((fn << 3) | 0) + _pbv(val)
+
+
+def _acevo_cfg(mappings):
+    """One device (our deck) with `mappings` = [(control_id, dir_or_None, button)]."""
+    ident = _pbld(1, b"D200x Button Box") + _pbld(5, ac_evo._DECK_GUID.encode())
+    dev = _pbld(1, ident)
+    for cid, direction, button in mappings:
+        ctl = _pbvi(1, cid) + _pbvi(5, cid)
+        if direction is not None:
+            ctl += _pbvi(3, direction)
+        m = _pbld(1, ctl)
+        if button - 1:                       # button0 == 0 is omitted (proto default)
+            m += _pbvi(2, button - 1)
+        dev += _pbld(2, m)
+    return _pbld(1, dev)
+
+
+def test_ac_evo_read(tmp_path):
+    cfg = tmp_path / "input_devices.inputdeviceconfiguration"
+    cfg.write_bytes(_acevo_cfg([
+        (132, None, 2),      # Indicator Left  -> button 2
+        (133, None, 3),      # Indicator Right -> button 3
+        (121, None, 1),      # Flashing Lights -> button 1 (button0 omitted)
+        (120, 2, 1),         # Cycle Lights +  -> button 1
+        (120, 1, 6),         # Cycle Lights -  -> button 6
+        (9999, None, 8),     # unknown control id -> still labels the button
+    ]))
+    assert ac_evo.read(cfg) == {
+        1: ["Flashing Lights", "Cycle Lights +"],
+        2: ["Indicator Left"],
+        3: ["Indicator Right"],
+        6: ["Cycle Lights -"],
+        8: ["control 9999"],
+    }
 
 
 def test_ac_rally_write_splices_hardwarekey(tmp_path):

@@ -286,11 +286,25 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   actions (all extracted); other menu categories live in the game's `.pak`
   default mapping contexts, not in a rebindable save.
 
-### AC EVO importer — separate, harder
-- AC EVO controls are an **undocumented binary protobuf**
-  (`Saved Games/ACE/input_devices.inputdeviceconfiguration`); `protoc
-  --decode_raw` reads structure but the field→action map needs RE. Lower
-  priority than AC Rally now that Rally turned out to be tractable GVAS.
+### AC EVO importer — DONE (reader)
+- AC EVO is Kunos' own engine (not UE). Controls: `compatdata/3058630/pfx/…/
+  Saved Games/ACE/input_devices.inputdeviceconfiguration`, a length-delimited
+  **protobuf** (no schema). `games/ac_evo.py` has a ~40-line varint/LD reader:
+  `File{ Device devices=1 }`, `Device{ Ident=1, Mapping mappings=2 }`,
+  `Mapping{ Control=1 (id in 1/5, dir in 3), button0 uint32=2 }`.
+- **The field roles were the reverse of my first guess**: `Control.id` is the
+  game's stable control id (per in-game action); `Mapping.button0` is the 0-based
+  gamepad button (**omitted when 0** = proto default = button 1); `Control.dir`
+  1/2 = the -/+ half of a bipolar "cycle" control. The "action drift" I saw was
+  just `button0` changing as a binding moved between buttons.
+- `read()` verified against the user's real file: all 12 bindings correct,
+  **including the bipolar Cycle Lights +/-**. `_CONTROL_IDS` map has 13 entries
+  (indicators, hazards, flashing, ignition, starter, horn, ERS, DRS, HUD, reset,
+  nameplate, cycle lights); unknown ids still label the button as `control N`.
+  Registered, `can_read: true`, in the import dropdown.
+- Writer feasible (append/modify a `Mapping` in the device block, re-serialize
+  the device) — not done; needs a careful pass + the user confirming the game
+  accepts the rewritten file.
 
 ### Phase — native KDE app
 - PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon

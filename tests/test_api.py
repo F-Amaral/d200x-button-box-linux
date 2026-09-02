@@ -179,7 +179,7 @@ def test_games_endpoint(client):
     assert status == 200 and "lmu" in games and "path" in games["lmu"]
     assert games["lmu"]["can_read"] and games["lmu"]["can_write"]
     assert games["ac_rally"]["can_read"] and games["ac_rally"]["can_write"]
-    assert not games["ac_evo"]["can_read"] and not games["ac_evo"]["can_write"]
+    assert games["ac_evo"]["can_read"] and not games["ac_evo"]["can_write"]
 
 
 def test_glyphs_endpoint(client):
