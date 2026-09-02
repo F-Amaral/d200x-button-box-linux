@@ -1,82 +1,95 @@
 # Configuration
 
-Everything lives in `~/.config/d200x-button-box/`:
+All config lives in `~/.config/d200x-button-box/`:
 
 ```
-settings.yaml            device / gamepad / api / active profile / auto-detect / home
-profiles/<name>.yaml     one or more pages of bindings for one context
+settings.yaml          device, gamepad, API, profile selection, navigation
+profiles/<name>.yaml   one or more pages of bindings for one context
 ```
 
-`d200x-button-box init` creates it with `settings.yaml` and the profiles
-`default`, `lmu`, `ac_evo`, `launcher`. Set `D200X_CONFIG_DIR` to use a
-different location. Set `D200X_NO_DEVICE=1` to run the daemon API-only, never
-opening the hardware — for working on the web UI on a spare `api.port` without
-disturbing the real daemon.
+`d200x-button-box init` creates the folder with a `settings.yaml` and the
+starter profiles `default`, `lmu`, `ac_evo`, `launcher`.
 
-The generated profiles use a **stable** control → gamepad-button map, so it's
-safe to re-generate without breaking bindings you already made in a game:
+Two environment variables help when developing:
+
+- `D200X_CONFIG_DIR` — use a different config folder.
+- `D200X_NO_DEVICE=1` — run the daemon API-only, never opening the hardware.
+  Handy for working on the web UI on a spare `api.port` alongside the real one.
+
+Edits to `settings.yaml` or the **active** profile take effect within a second —
+the daemon reloads and the deck re-renders. No restart.
+
+## The stable button map
+
+Every deck control sends a fixed gamepad button. The map never changes, so you
+can regenerate profiles or re-run `init` without breaking bindings you already
+made in a game:
 
 | control | button |
 |--|--|
 | LCD keys 0–12 | 1–13 |
 | wide status key | 14 |
-| aux L / aux R | home / page (buttons 15–16 reserved, unused) |
-| encoder 17 turn L / turn R / click | 17 / 18 / 19 |
+| aux L / aux R | 15 / 16 (reserved; the aux buttons are navigation by default) |
+| encoder 17 — turn left / turn right / click | 17 / 18 / 19 |
 | encoder 18 | 20 / 21 / 22 |
 | encoder 19 | 23 / 24 / 25 |
 
-Editing `settings.yaml` or the **active** profile file takes effect within a
-second — no restart. The daemon reloads and the deck re-renders.
+On a multi-page profile the LCD keys shift by 13 per page (page 2 → buttons
+14–26) so pages don't reuse each other's buttons.
 
 ## settings.yaml
 
 ```yaml
 device:
-  brightness: 80            # 0-100, null to leave alone
-  heartbeat_seconds: 2      # watchdog write interval that keeps the deck in host
-                            # mode; do not set to 0 or the deck drops out
-  grab_keyboard: true       # swallow the deck's own firmware HID keyboard
+  brightness: 80           # 0-100, or null to leave it alone
+  heartbeat_seconds: 2     # watchdog write that keeps the deck awake; never 0
+  grab_keyboard: true      # swallow the deck's own firmware keyboard
 
 gamepad:
   name: D200x Button Box
-  buttons: 32               # size of the virtual pad; raise if you map more
+  buttons: 32              # size of the virtual pad; raise if you map more
 
-pulse_ms: 60               # how long a knob step / momentary press is held
+pulse_ms: 60              # how long a knob step / momentary press is held
+hold_ms: 500             # press time that counts as a hold, not a tap
 
-active_profile: launcher   # used when nothing else selects a profile
+active_profile: launcher  # used when nothing else selects a profile
 
-auto_detect:               # profile -> case-insensitive substrings in /proc/*/cmdline
+auto_detect:              # profile -> case-insensitive substrings in /proc/*/cmdline
   lmu: [LeMansUltimate]
   ac_evo: [AssettoCorsaEVO, acevo]
+  ac_rally: [acr.exe, Assetto Corsa Rally]
 
-games:                     # install folders, for "import labels from a game"
-  lmu: /path/to/Le Mans Ultimate   # auto-filled from Steam libraries if found
+games:                    # game -> install folder, for import / bind-to-game
+  lmu: /path/to/Le Mans Ultimate   # auto-filled from your Steam libraries
+
+nav:                      # what the aux buttons do (see "Navigation")
+  binds:
+    15: {tap: prev_page, hold: home}
+    16: {tap: next_page}
 
 home:
-  key: 15                  # control index that acts as "home" in every profile; null = off
-  profile: launcher        # where it jumps to
-  revert_seconds: 5        # idle seconds before returning to auto-detect; 0 = stay
+  profile: launcher       # where the "home" function jumps to
+  revert_seconds: 5       # idle seconds before auto-detect takes over again; 0 = stay
 
 api:
-  host: 127.0.0.1          # 0.0.0.0 to reach it from the LAN (phone)
+  host: 127.0.0.1         # 0.0.0.0 to reach it from the LAN (a phone)
   port: 8377
-  token: null              # require this token when set (phase 2)
+  token: null             # when set, every /api/* call must send it
 ```
 
 ## Profile selection
 
 The daemon picks a profile in this order:
 
-1. manual override — `d200x-buttonboxd --profile X`, a `{profile:}` binding, or
-   the API
-2. `auto_detect` — first profile whose substrings match a running process
-3. `active_profile` in settings
-
-A `{profile: "auto"}` binding clears a manual override.
+1. **Manual override** — `d200x-buttonboxd --profile X`, a `{profile: X}`
+   binding, or the API. A `{profile: auto}` binding clears it.
+2. **Auto-detect** — the first profile whose `auto_detect` substrings match a
+   running process.
+3. **`active_profile`** in `settings.yaml`.
 
 ## Profiles and pages
 
-A profile is one or more **pages**. Single-page profiles are flat:
+A profile is one or more **pages**. A single-page profile is flat:
 
 ```yaml
 keys:
@@ -85,165 +98,73 @@ knobs:
   17: {left: {gamepad: 17}, right: {gamepad: 18}, press: {gamepad: 19}}
 ```
 
-Multi-page — 13 keys × N. A page switch releases held buttons and re-renders:
+Multi-page — 13 keys each. Switching page releases any held buttons and
+re-renders:
 
 ```yaml
 pages:
   - name: drive
     keys:
       0: {gamepad: 1, label: "TURN L"}
-      16: {page: "next"}          # rightmost aux cycles pages
+      16: {page: next}          # rightmost aux cycles pages
   - name: pit / radio
     keys:
       0: {gamepad: 20, label: "BOX BOX"}
-      16: {page: "next"}
+      16: {page: next}
 ```
 
-Switching profiles resets to page 0.
+Switching profiles always resets to page 0.
 
-An optional top-level `game:` field links the profile to a game (set by "Import
-from a game"; editable via the 🎮 chip under the deck). It drives the editor's
-bind-to-game tool. Deleting the active profile is allowed — the deck falls back
-to the home profile; only the home profile itself can't be deleted.
+An optional top-level `game:` links the profile to a game. It is set by "Import
+from a game" and drives the editor's bind-to-game tool; edit it via the 🎮 chip
+under the deck. Deleting the active profile is fine — the deck falls back to the
+home profile. Only the home profile itself can't be deleted.
 
 ## Bindings
 
-Each key/knob-event binding has exactly one action:
+Each key or knob-event binding has exactly one action:
 
 | form | effect |
 |--|--|
-| `{gamepad: N}` | hold virtual joystick button `N` while the key is down |
-| `{gamepad: N, momentary: true}` | short `pulse_ms` press instead of a hold |
-| `{key: "F8"}` | send a keystroke via `ydotool` / `xdotool` |
+| `{gamepad: N}` | hold virtual button `N` while the key is down |
+| `{gamepad: N, momentary: true}` | a short `pulse_ms` press instead of a hold |
+| `{key: "F8"}` | send a keystroke (via `ydotool` / `xdotool`) |
 | `{command: "sh -c ..."}` | run a shell command |
 | `{profile: "lmu"}` | switch profile — also `home`, `auto`, `next`, `prev` |
-| `{page: "next"}` | switch page — also `prev` or a page number |
+| `{page: next}` | switch page — also `prev` or a page number |
 
-Plus optional, for the LCD key:
-
-- `label: "PIT"` — text on the key
-- `icon: /path/to.png` — an uploaded image (auto-resized to 196×196)
-- `icon_text: "PIT"` — override the auto initials on a generated icon
-- `icon_style: {…}` — per-key overrides of the page style (below)
-
-## Key icons
-
-Every LCD key with a label gets an icon so the deck never shows bare text on
-black. Resolution order: an uploaded `icon:` image → otherwise a **generated**
-one (initials of `icon_text` or `label` on a shape).
-
-Generated-icon style is a merge of the built-in defaults, the page's `style`,
-and the key's `icon_style`:
-
-```yaml
-# a page with its own default look
-style: {mode: ring, shape: circle, border: "#4a9eff", fill: "#1b1f26", fg: "#ffffff", font: sans}
-keys:
-  0: {gamepad: 1, label: "Pit", icon_text: "PIT"}
-  1: {gamepad: 2, label: "Radio", icon_style: {mode: solid, fill: "#c0392b"}}
-```
-
-- `mode`: `solid` (filled) or `ring` (outline only, dark centre)
-- `shape`: `circle` or `round`
-- `border` / `fill` / `fg`: hex colours
-- `font`: `sans` / `condensed` / `mono` / `liberation` (text mode only)
-
-A key can also carry `glyph: <name>` — a real **ISO 7000 automotive tell-tale**
-(`hl_low`, `hl_high`, `turn`, `hazards`, `wiper`, `washer`, `horn`, `fan`,
-`battery`, `oil`, `tc`, `abs`, `esp`, …), a **composed** icon (`engine_start`,
-`seat_fore`/`seat_aft`/`seat_up`/`seat_down`/`seat_recline`), or a **Material
-Icons** name; `GET /api/glyphs` lists them all. Tell-tales and composed icons
-are drawn frameless; everything else sits on the circle / rounded-square frame.
-
-Composed icons (`engine_start`, the `seat_*` family) are generated: a spec in
-`d200x_button_box/compose.py` (`COMPOSED`) describes a base ISO symbol + drawn
-arrows / arcs / lines (coords as fractions of the icon square), and
-`tools/build-composed-icons.py` renders each to a committed PNG in
-`assets/telltales/`. To add or change one, edit `COMPOSED` and re-run the tool.
-
-### Adjusting an icon by hand
-
-The web UI's **Icons** button (or **customise `<glyph>`** on a key) opens a
-visual editor: pick a base, nudge scale / position, add arrow / arc / line /
-tick layers, live preview. **＋** makes a brand-new icon (seeded from the one
-open); on the CLI, `d200x-button-box icons new <name> [--base <telltale>]`.
-Each layer can take an optional **`color:`** so it draws in a fixed colour
-instead of following the key's icon colour. A **`region`** layer recolours /
-fills part of the symbol clipped to a rect or ellipse — `color:` repaints the
-strokes there, `fill:` floods their enclosed interior and the strokes are drawn
-back on top (base `turn` + a region over the left half = a blue arrow with a
-white centre). **Save** stores your spec in
-`~/.config/d200x-button-box/icons.yaml` and renders it to
-`~/.config/d200x-button-box/generated/<name>.png`, which then shadows the
-bundled default. **Reset to built-in** removes your override.
-
-Maintainers propagating a tweak upstream: get it right in the editor, then
-`d200x-button-box icons promote <name>` bakes the spec into
-`assets/composed.yaml` + the committed `assets/telltales/<name>.png` and clears
-your override. Commit both. The **spec (JSON)** view in the editor shows the
-current spec for copy/paste.
-
-```python
-# a spec
-"seat_up": {
-    "base": "seat", "base_scale": 0.54, "base_at": [0.40, 0.44],
-    "layers": [
-        {"type": "line",  "from": [0.06, 0.9], "to": [0.8, 0.9], "w": 0.045},
-        {"type": "arrow", "at": [0.86, 0.86], "dir": "up", "len": 0.34, "head": 0.12, "w": 0.055},
-    ],
-}
-```
-
-**Nav keys pick a glyph automatically:** `{page: next}` → chevron,
-`{profile: home}` → house, `{command: …}` → terminal. **Game keys** with a label
-but no glyph get one from keywords — car-control words map to the tell-tales —
-and fall back to the label's initials.
-
-To pin an icon to a control label (used by every key with that label, across
-profiles), use the **set / change** link in the editor's Auto look, or
-`d200x-button-box icons action "Cycle Lights" headlights_auto`
-(`--clear` to undo). Stored in `~/.config/d200x-button-box/action_icons.yaml`.
-
-## Two style baselines
-
-`settings.icon` has `game` and `nav` sub-styles:
-
-```yaml
-icon:
-  game: {mode: solid, shape: circle, border: "#4a9eff", fill: "#2a3140", fg: "#ffffff"}
-  nav:  {mode: ring,  shape: round,  border: "#7d8794", fill: "#0d0f13", fg: "#aeb6c2"}
-```
-
-Action keys use `game` (then `page.style`, then the key's `icon_style`);
-navigation keys (`page:` / `profile:` bindings, or `role: nav`) use `nav`. The
-visual language: **circle = a sim control, rounded square = a box control.**
-
-## Page navigation
-
-```yaml
-# settings.yaml
-nav: {prev_key: 15, next_key: 16}   # default: the two aux buttons
-hold_ms: 500
-```
-
-The aux buttons page prev / next with **no binding needed**. On a multi-page
-profile the left one is `tap → prev page`, `hold → home` (`settings.home`); on a
-single-page profile it's just `home`. Put an explicit binding on those keys in a
-profile to override. `+ page` in the web UI moves any explicit aux bindings onto
-the new page.
-
-Any binding can take `hold:` for a second press-and-hold action:
+Any binding can carry a `hold:` for a second press-and-hold action:
 
 ```yaml
 0: {gamepad: 1, hold: {command: "some-reset-script"}}
 ```
 
-In the web UI: the **⚙** next to the page tabs edits the page style + name; the
-**style** button in a key's editor sets a per-key override; **upload an image**
-for a real picture. Uploaded images that no profile references any more are
-cleaned from `icons/` automatically.
+An LCD key can also take `label:` and icon fields — see **Key icons**.
 
-Knobs take `left` / `right` / `press`, each a binding:
+## Navigation
+
+The two round aux buttons are navigation by default, no binding needed.
+`settings.nav.binds` maps a control index to `{tap: ..., hold: ...}`, where each
+value is `prev_page`, `next_page` or `home`:
+
+```yaml
+nav:
+  binds:
+    15: {tap: prev_page, hold: home}   # aux L
+    16: {tap: next_page}               # aux R
+```
+
+Put an explicit binding on an aux key in a profile to override navigation there.
+`+ page` in the web UI moves any explicit aux bindings onto the new page.
+
+**Home** pops the deck to `home.profile` (the launcher) mid-race. After
+`home.revert_seconds` with no deck input it returns to the game's profile on its
+own; any deck press resets that timer, and choosing a profile explicitly cancels
+it. `revert_seconds: 0` stays put.
+
+## Knobs
+
+Each encoder takes `left` / `right` / `press`, each a full binding:
 
 ```yaml
 knobs:
@@ -253,71 +174,158 @@ knobs:
     press: {gamepad: 19}
 ```
 
-Encoder turns fire one pulse per detent. The encoder **click is reported only on
-release** by the firmware, so it is always a pulse — see
+Encoder turns fire one `pulse_ms` pulse per detent. The firmware only reports an
+encoder **click on release**, so a click is always a pulse, never a hold — see
 [hardware.md](hardware.md).
+
+## Key icons
+
+Every LCD key with a label gets an icon, so the deck never shows bare text on
+black. Resolution order:
+
+1. an uploaded `icon:` image (any PNG/JPG, auto-resized to 196×196), or
+2. a **generated** icon — a glyph, or the initials of `icon_text` / `label`, on
+   a shape.
+
+Per-key fields:
+
+- `label: "PIT"` — text on the key
+- `icon: /path/to.png` — an uploaded image
+- `icon_text: "PIT"` — override the auto initials
+- `glyph: turn` — draw a named symbol instead of initials (below)
+- `icon_style: {...}` — per-key style overrides
+
+### Style
+
+A generated icon's style is the merge of the built-in default, the page's
+`style:`, and the key's `icon_style:`:
+
+```yaml
+style: {mode: ring, shape: circle, border: "#4a9eff", fill: "#1b1f26", fg: "#ffffff", font: sans}
+keys:
+  0: {gamepad: 1, label: "Pit", icon_text: "PIT"}
+  1: {gamepad: 2, label: "Radio", icon_style: {mode: solid, fill: "#c0392b"}}
+```
+
+- `mode`: `solid` (filled) or `ring` (outline, dark centre)
+- `shape`: `circle` or `round` (rounded square)
+- `border` / `fill` / `fg`: hex colours
+- `font`: `sans` / `condensed` / `mono` / `liberation` (text only)
+
+`settings.icon` holds two baselines, `game` and `nav`. Action keys use `game`
+(then the page style, then `icon_style`); navigation keys use `nav`. The visual
+language is **circle = a sim control, rounded square = a box control**:
+
+```yaml
+icon:
+  game: {mode: solid, shape: circle, border: "#4a9eff", fill: "#2a3140", fg: "#ffffff"}
+  nav:  {mode: ring,  shape: round,  border: "#7d8794", fill: "#0d0f13", fg: "#aeb6c2"}
+```
+
+### Glyphs
+
+`glyph:` can name:
+
+- an **ISO 7000 automotive tell-tale** — `hl_low`, `hl_high`, `turn`, `hazards`,
+  `wiper`, `washer`, `horn`, `fan`, `battery`, `oil`, `tc`, `abs`, `esp`, …
+- a **composed** icon — `engine_start`, the `seat_*` family
+- a **Material Icons** name
+
+`GET /api/glyphs` lists them all. Tell-tales and composed icons are drawn
+frameless; everything else sits on the frame.
+
+Nav keys pick a glyph automatically (`{page: next}` → chevron, `{profile: home}`
+→ house, `{command: ...}` → terminal). Game keys with a label but no glyph get
+one from keywords (car-control words map to tell-tales), falling back to the
+label's initials.
+
+To pin a glyph to a control label — every key with that label, in every profile
+— use the **set / change** link in the editor's Auto look, or:
+
+```bash
+d200x-button-box icons action "Cycle Lights" headlights_auto   # --clear to undo
+```
+
+### The icon editor
+
+The web UI's **Icons** button (or **customise `<glyph>`** on a key) opens a
+visual editor: pick a base symbol, nudge its scale and position, add
+arrow / arc / line / tick layers, preview live. **＋** starts a brand-new icon;
+on the CLI, `d200x-button-box icons new <name> [--base <telltale>]`.
+
+- A layer can take a `color:` to draw in a fixed colour instead of the key's
+  icon colour.
+- A `region:` layer recolours or fills part of the symbol, clipped to a rect or
+  ellipse. `color:` repaints the strokes there; `fill:` floods their enclosed
+  interior and redraws the strokes on top (base `turn` + a region over the left
+  half = a blue arrow with a white centre).
+
+**Save** writes your spec to `icons.yaml` and renders
+`generated/<name>.png`, which then shadows the bundled default. **Reset to
+built-in** removes the override.
+
+Maintainers propagating a tweak upstream: get it right in the editor, then
+`d200x-button-box icons promote <name>` bakes the spec into `assets/` and clears
+your override — commit both files.
+
+## Games: import and bind-to-game
+
+Both features read (or write) the game's own controller config. **Close the
+game first** — each reads its config at startup, and the daemon refuses to write
+while the game process is running. A one-time `.d200x-bak` backup is written
+next to the file the first time it's changed.
+
+| Game | Import | Bind-to-game | Config file |
+|--|:--:|:--:|--|
+| Le Mans Ultimate | ✅ | ✅ | `UserData/player/direct input.json` |
+| Assetto Corsa EVO | ✅ | ✅ | `…/Saved Games/ACE/input_devices.inputdeviceconfiguration` |
+| Assetto Corsa Rally | ✅ | ✅ | `…/Saved/SaveGames/EnhancedInputUserSettings.sav` |
+
+Install folders (and the EVO / Rally save files under `compatdata/`) are located
+from your Steam libraries automatically and stored in `settings.games`.
+
+### Import from a game
+
+"Import from a game" in the web UI (or `POST /api/profiles/<name>/import`) reads
+the game's config and labels each deck key that's bound to the **D200x Button
+Box** controller with its in-game control name.
+
+- If no profile named after the game exists yet, one is **created** from the
+  stable button map, and `settings.games` / `auto_detect` are seeded so the
+  daemon switches to it when the game runs.
+- If one exists, you get **Update it** or **New profile `<game>-2`**.
+- In-game buttons that don't land on any deck control are listed in the import
+  report so you can assign them.
+- `overwrite: false` keeps labels you typed by hand (only matters on an update).
+
+For AC EVO, controls it doesn't recognise are labelled `control <n>` and can't
+be written back; bipolar "cycle" controls import as two entries (`… +` / `… -`).
+
+### Bind-to-game
+
+For a profile linked to a game, the key editor shows a **bind this button in
+`<game>`** dropdown under a `gamepad` binding. Pick a control and the game's
+config is updated (with autosave on, the moment you pick it). Binding a control
+to a button also clears whatever else was on it.
+
+- **LMU** needs the device recorded once: bind any single control to the deck
+  inside LMU before the first write, so the game has stored the device GUID.
+- Dragging a key onto another in the web UI moves its in-game binding too.
 
 ## The launcher profile
 
 `launcher` is the default `active_profile` — what's on the deck when no game is
-running. Use `{command:}` to start LMU/CrewChief and `{profile:}` to jump into a
-game profile:
+running. Use `{command:}` to start a game or CrewChief and `{profile:}` to jump
+into a game profile:
 
 ```yaml
 keys:
   0: {label: "LMU + VR", command: "steam steam://rungameid/2399420"}
   1: {label: "CrewChief", command: "sh -c 'cd ~/CrewChiefV4 && ./CrewChief.sh &'"}
   2: {label: "-> LMU", profile: "lmu"}
+  3: {label: "-> AC EVO", profile: "ac_evo"}
+  4: {label: "Auto", profile: "auto"}
 ```
 
-When you launch a game, `auto_detect` switches to its profile on its own; on
-quit it falls back to `launcher`.
-
-## Import a profile from a game
-
-"Import from a game" in the web UI (or `POST /api/profiles/<name>/import`)
-reads the game's own control config and builds a deck profile *for that game*:
-every deck key bound to the **D200x Button Box** controller in the game gets
-that in-game control name as its `label`.
-
-- If no profile named after the game exists yet, it is **created** from the
-  stable gamepad-button map, and `settings.games` / `auto_detect` are seeded so
-  the daemon switches to it when the game runs.
-- If one exists, the panel offers **Update it** or **New profile `<game>-2`**.
-- **Le Mans Ultimate** — reads `UserData/player/direct input.json` (`games.lmu`,
-  auto-detected from Steam libraries).
-- **Assetto Corsa Rally** — reads the UE5 SaveGame
-  `…/compatdata/<appid>/pfx/…/AppData/Local/acr/Saved/SaveGames/EnhancedInputUserSettings.sav`
-  (auto-located). Read-only for now (no bind-to-game yet).
-- **Assetto Corsa EVO** — reads/writes `…/compatdata/3058630/pfx/…/Saved
-  Games/ACE/input_devices.inputdeviceconfiguration` (a protobuf). Handles plain
-  and bipolar (cycle +/-) bindings; unrecognised in-game controls label the
-  button as `control <n>` and can't be written. **Close AC EVO before writing**
-  — it rewrites this file while running.
-- Buttons bound in-game that aren't on any deck control are listed in the
-  import report so you can assign them.
-- `overwrite: false` keeps labels you typed by hand (only matters when updating).
-
-## Bind-to-game (the reverse)
-
-For a profile linked to a game that supports writing (**LMU**, **AC Rally**),
-the key editor shows a "bind this button in &lt;game&gt;" dropdown under a
-`gamepad` binding — pick a control, apply, and the game's own config is updated
-(a one-time `.d200x-bak` backup is written next to it).
-
-- **Close the game first** — both read their config at startup and rewrite it on
-  exit. The daemon refuses the write while the game process is detected running.
-- LMU: writes `Input[control] = {device, id}` in `direct input.json`. Bind any
-  one control to the deck inside LMU once first, so the game has recorded the
-  device GUID.
-- AC Rally: splices the HardwareKey in the active key profile inside
-  `EnhancedInputUserSettings.sav` (a UE5 GVAS save). Binding a button to a
-  control also clears whatever else was on that button.
-
-## The home button
-
-`init` maps the leftmost aux button (the round one, no screen) to home. Press it
-mid-race to pop to the launcher; after `revert_seconds` with no deck input it
-returns you to the game's profile automatically. Any deck press resets the
-timer; choosing a profile explicitly cancels it. Set `home.key: null` to
-disable, or point it at any control index.
+When a game starts, `auto_detect` switches to its profile on its own; on quit
+the deck falls back to `launcher`.

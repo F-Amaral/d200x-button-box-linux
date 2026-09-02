@@ -30,15 +30,18 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 | GET | `/api/state` | | device, active profile + page, profile list |
 | GET | `/api/settings` | | current settings as JSON |
 | PUT | `/api/settings` | full settings dict | validated by round-trip, then saved |
-| GET | `/api/profiles` | | `{profiles: [...], active: "<name>"}` |
+| GET | `/api/profiles` | | `{profiles: [...], active: "<name>", games: {name: linked-game}}` |
 | GET | `/api/profiles/<name>` | | the profile (`{keys,knobs}` or `{pages:[...]}`) |
 | PUT | `/api/profiles/<name>` | profile dict | saved |
 | POST | `/api/profiles/<name>` | | create from the default template if missing |
-| DELETE | `/api/profiles/<name>` | | |
-| GET | `/api/games` | | `{lmu: {path, can_write}}` — importers + detected install folders |
+| DELETE | `/api/profiles/<name>` | | 409 for the home profile; if it was active, falls back to home |
+| POST | `/api/profiles/<name>/rename` \| `/duplicate` | `{to}` | |
+| GET | `/api/games` | | `{lmu: {path, label, can_read, can_write}, …}` — importers + detected install folders |
 | GET | `/api/games/<game>/controls` | | `{controls: [names], device_present, bound: {name: button}}` |
 | POST | `/api/games/<game>/bind` | `{control, button}` or `{control, clear:true}` | write the game's controller config (409 if the game is running) |
-| POST | `/api/profiles/<name>/import` | `{game, path?, overwrite?}` | label the profile from the game's bindings; returns `{applied, skipped, unmatched}` |
+| POST | `/api/profiles/<name>/import` | `{game, path?, overwrite?}` | label the profile from the game's bindings; returns `{applied, skipped, unmatched, created, profile}` |
+| GET | `/api/action-icons` | | `{label: glyph}` — glyphs pinned to control labels |
+| PUT | `/api/action-icons` | `{label, glyph}` (`glyph: null` to clear) | pin / unpin a glyph, then re-push the deck |
 | POST | `/api/activate` | `{"profile": "lmu"｜"auto"}` | manual override |
 | POST | `/api/page` | `{"page": "next"｜"prev"｜N}` | |
 | POST | `/api/icons` | raw image bytes (`Content-Type: image/*`) | saves a 196×196 PNG, returns `{path, url}` |

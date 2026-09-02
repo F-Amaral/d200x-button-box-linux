@@ -9,7 +9,7 @@
 ## Install
 
 ```bash
-git clone <this repo> d200x-button-box
+git clone https://github.com/F-Amaral/d200x-button-box-linux d200x-button-box
 cd d200x-button-box
 python -m venv .venv && . .venv/bin/activate
 pip install -e .
