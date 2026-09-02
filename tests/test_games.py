@@ -235,5 +235,67 @@ def test_ac_evo_write_splices_the_device_block(tmp_path):
     ac_evo.write(cfg, "Horn", None)               # clear
     assert 10 not in ac_evo.read(cfg)
 
-    with pytest.raises(ValueError, match="unnamed control"):
-        ac_evo.write(cfg, "control 12345", 1)
+    # an un-named id is bindable too (shows as "control <id>" until named)
+    ac_evo.write(cfg, "control 415", 7)
+    assert ac_evo.read(cfg)[7] == ["control 415"]
+    with pytest.raises(ValueError, match="cannot resolve"):
+        ac_evo.write(cfg, "Nonsense", 1)
+
+
+def _acevo_multi_device(devices):
+    """devices = [(name, guid, [(cid, dir, button), ...]), ...]."""
+    out = b""
+    for name, guid, mappings in devices:
+        ident = _pbld(1, name.encode()) + _pbld(5, guid.encode())
+        dev = _pbld(1, ident)
+        for cid, direction, button in mappings:
+            ctl = _pbvi(1, cid) + _pbvi(5, cid) + (_pbvi(3, direction) if direction else b"")
+            m = _pbld(1, ctl) + (_pbvi(2, button - 1) if button > 1 else b"")
+            dev += _pbld(2, m)
+        out += _pbld(1, dev)
+    return out
+
+
+def test_ac_evo_controls_lists_ids_from_all_devices(tmp_path):
+    cfg = tmp_path / "input_devices.inputdeviceconfiguration"
+    cfg.write_bytes(_acevo_multi_device([
+        ("Some Wheel", "{FFFF0000-0000-0000-0000-000000000000}", [(140, None, 3), (169, None, 4)]),
+        ("D200x Button Box", ac_evo._DECK_GUID, [(139, None, 6)]),   # Horn
+    ]))
+    # sibling keyboard file (flat Mapping list; field 1 there is a header)
+    (tmp_path / "input_keyboard.keyboardinputconfiguration").write_bytes(
+        b"\x0a\x03\x10\x11\x12"
+        + _pbld(2, _pbld(1, _pbvi(1, 300) + _pbvi(5, 300)))
+        + _pbld(2, _pbld(1, _pbvi(1, 415) + _pbvi(5, 415))))
+    info = ac_evo.controls(cfg)
+    assert "Horn" in info["controls"]              # our named set
+    assert "control 140" in info["controls"]       # bound on the wheel
+    assert "control 169" in info["controls"]
+    assert "control 300" in info["controls"]       # from the keyboard file
+    assert "control 415" in info["controls"]
+    assert info["bound"]["Horn"] == 6
+
+
+def test_ac_evo_learns_names_from_deck_labels(tmp_path, monkeypatch):
+    from d200x_button_box import config
+
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+    cfg = tmp_path / "input_devices.inputdeviceconfiguration"
+    cfg.write_bytes(_acevo_cfg([
+        (415, None, 5),      # unnamed control on button 5
+        (139, None, 6),      # Horn (already named) on button 6
+        (120, 1, 7),         # bipolar half -- name is ambiguous, skip
+    ]))
+
+    # labels the user typed on the deck keys for those buttons
+    ac_evo.learn(cfg, {5: "Look Left", 6: "My Horn", 7: "Lights Down"})
+
+    names = ac_evo._names()
+    assert names[415] == "Look Left"     # learned
+    assert names[139] == "Horn"          # not overwritten (was already named)
+    assert 120 not in ac_evo._learned()  # bipolar skipped
+    assert ac_evo.read(cfg)[5] == ["Look Left"]
+
+    # a second learn doesn't clobber the first
+    ac_evo.learn(cfg, {5: "Something Else"})
+    assert ac_evo._names()[415] == "Look Left"

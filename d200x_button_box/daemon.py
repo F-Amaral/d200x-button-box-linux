@@ -6,6 +6,7 @@ automatically when a known game process appears.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import queue
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 _RELOAD_POLL = 1.0     # seconds between config-file mtime checks
 _DETECT_POLL = 3.0     # seconds between game-process scans
 _RECONNECT_POLL = 2.0  # seconds between device reconnect attempts
+_GSYNC_POLL = 3.0      # seconds between live game-label syncs (linked game running)
 
 
 class Daemon:
@@ -105,6 +107,58 @@ class Daemon:
     def page(self):
         return self.profile.page(self._page)
 
+    # --- live game-label sync -----------------------------------------------
+    def _sync_game_labels(self) -> None:
+        """While the linked game is running: (1) fill *blank* deck labels from a
+        control the game now binds -- so it shows up on the deck without a manual
+        import; (2) feed the labels you *have* typed back to the game module, so
+        it can remember names for controls it only knew by number. Never clobbers
+        a label."""
+        from . import config, games
+
+        prof = self.profile
+        game = prof.game
+        path = self.settings.games.get(game) if game else None
+        if not path:
+            return
+        hints = games.detect_hints().get(game)
+        if not (hints and gamedetect.detect({game: hints})):
+            return
+        try:
+            names = games.read(game, path)
+        except Exception as e:  # noqa: BLE001 - a bad/locked file must not kill the loop
+            log.debug("game-label sync (%s): %s", game, e)
+            return
+
+        def _placeholder(name: str) -> bool:
+            return name.split(" ")[0] == "control" and name.split(" ")[-1].strip("+-").isdigit()
+
+        changed = False
+        have_label: dict[int, str] = {}   # button -> the label you typed
+        for page in prof.pages:
+            binds = list(page.keys.values())
+            for knob in page.knobs.values():
+                binds += [s for s in knob.values() if isinstance(s, dict)]
+            for b in binds:
+                n = b.get("gamepad")
+                if not isinstance(n, int):
+                    continue
+                if b.get("label"):
+                    have_label[n] = b["label"]
+                elif names.get(n) and not _placeholder(names[n][0]):
+                    b["label"] = " / ".join(names[n])
+                    changed = True
+        if changed:
+            config.save_profile(prof)   # picked up by the next reload tick
+            log.info("game-label sync: labeled keys in %s from %s", self.store.active_name, game)
+
+        learn = getattr(games.get(game), "learn", None)
+        if learn and have_label:
+            try:
+                learn(path, have_label)
+            except Exception as e:  # noqa: BLE001
+                log.debug("game-name learn (%s): %s", game, e)
+
     @property
     def _pulse(self) -> float:
         return self.settings.pulse_ms / 1000.0
@@ -184,6 +238,13 @@ class Daemon:
 
     # --- event routing -----------------------------------------------------
     def _on_event(self, ev: protocol.InputEvent) -> None:
+        # translate the physical hardware index to logical (as-mounted) once,
+        # here at the device boundary -- everything downstream is orientation-free
+        if self.settings.orientation:
+            from . import orient
+            ev = dataclasses.replace(
+                ev, index=orient.to_logical(ev.index, self.settings.orientation))
+
         if self._subs:
             self._publish({"type": "input", "name": ev.name, "index": ev.index,
                            "kind": ev.kind, "action": ev.action})
@@ -255,7 +316,7 @@ class Daemon:
             return False
         self._kbd.grab()
         try:
-            self.dev.send_init(self.page, self.settings.icon)
+            self.dev.send_init(self.page, self.settings.icon, orientation=self.settings.orientation)
             if self.settings.brightness is not None:
                 self.dev.set_brightness(self.settings.brightness)
         except DeviceGone:
@@ -315,7 +376,8 @@ class Daemon:
         if self.dev is None:
             return
         try:
-            wrote = self.dev.send_init(self.page, self.settings.icon, quiet=True, force=force)
+            wrote = self.dev.send_init(self.page, self.settings.icon, quiet=True, force=force,
+                                       orientation=self.settings.orientation)
             if self._status_mode() == "off":
                 self.dev.small_window_background()   # show the status key's own icon
         except DeviceGone:
@@ -432,7 +494,7 @@ class Daemon:
             log.warning("D200x not connected -- API is up; retrying every %.0fs", _RECONNECT_POLL)
         log.info("running (profile: %s) -- ctrl-c to quit", self.store.active_name)
 
-        self._last_beat = last_reload = last_detect = last_conn = 0.0
+        self._last_beat = last_reload = last_detect = last_conn = last_gsync = 0.0
         detected: str | None = None
 
         while self._run:
@@ -474,6 +536,9 @@ class Daemon:
             if now - last_detect > _DETECT_POLL:
                 detected = gamedetect.detect(self.settings.auto_detect)
                 last_detect = now
+            if now - last_gsync > _GSYNC_POLL:
+                self._sync_game_labels()
+                last_gsync = now
             if self._reload_now or now - last_reload > _RELOAD_POLL:
                 self._reload_now = False
                 if self.store.resolve(detected=detected):

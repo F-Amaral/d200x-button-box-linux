@@ -25,7 +25,7 @@ class FakeDev:
     def __init__(self):
         self.inits = []
 
-    def send_init(self, page=None, icon_cfg=None, quiet=False, force=False):
+    def send_init(self, page=None, icon_cfg=None, quiet=False, force=False, orientation=0):
         self.inits.append(page)
         return True
 
@@ -298,6 +298,86 @@ def test_page_switch_releases_held_button():
     assert ("press", 1) in pad.events
     d.set_page("next")
     assert ("release", 1) in pad.events               # released on page change
+
+
+def test_sync_game_labels_fills_only_blanks(monkeypatch):
+    from d200x_button_box import config as cfgmod
+    from d200x_button_box import gamedetect, games
+
+    pages = [config.Page(keys={
+        0: {"gamepad": 1},                       # blank -> gets labeled
+        1: {"gamepad": 2, "label": "My Name"},   # kept
+        2: {"gamepad": 3},                       # game doesn't bind it -> stays blank
+    })]
+    d, _ = _daemon(pages=pages, settings=config.Settings(games={"lmu": "/x"}))
+    d.store.profile.game = "lmu"
+
+    monkeypatch.setattr(games, "detect_hints", lambda: {"lmu": ["LeMansUltimate"]})
+    monkeypatch.setattr(gamedetect, "detect", lambda ad: "lmu")
+    monkeypatch.setattr(games, "read", lambda g, p: {1: ["Headlights"], 2: ["Wipers"]})
+    saved = []
+    monkeypatch.setattr(cfgmod, "save_profile", lambda prof: saved.append(prof))
+
+    d._sync_game_labels()
+    assert d.store.profile.pages[0].keys[0]["label"] == "Headlights"
+    assert d.store.profile.pages[0].keys[1]["label"] == "My Name"
+    assert "label" not in d.store.profile.pages[0].keys[2]
+    assert len(saved) == 1
+
+    d._sync_game_labels()                        # converged -> no second save
+    assert len(saved) == 1
+
+
+def test_sync_game_labels_skips_placeholders_and_feeds_learn(monkeypatch):
+    from d200x_button_box import config as cfgmod
+    from d200x_button_box import gamedetect, games
+    from d200x_button_box.games import Game
+
+    pages = [config.Page(keys={
+        0: {"gamepad": 1, "label": "Cockpit Cam"},   # a name the user typed
+        1: {"gamepad": 2},                            # game returns "control 9" -> stays blank
+    })]
+    d, _ = _daemon(pages=pages, settings=config.Settings(games={"ac_evo": "/x"}))
+    d.store.profile.game = "ac_evo"
+
+    monkeypatch.setattr(games, "detect_hints", lambda: {"ac_evo": ["acevo"]})
+    monkeypatch.setattr(gamedetect, "detect", lambda ad: "ac_evo")
+    monkeypatch.setattr(games, "read", lambda g, p: {1: ["control 415"], 2: ["control 9"]})
+    monkeypatch.setattr(cfgmod, "save_profile", lambda prof: None)
+    learned = []
+    monkeypatch.setitem(games.ALL, "ac_evo",
+                        Game(key="ac_evo", label="AC EVO", read=lambda p: {},
+                             learn=lambda path, labels: learned.append(labels)))
+
+    d._sync_game_labels()
+    assert "label" not in d.store.profile.pages[0].keys[1]   # "control 9" is a placeholder, not a label
+    assert learned == [{1: "Cockpit Cam"}]                   # your label fed to learn()
+
+
+def test_sync_game_labels_noop_when_game_not_running(monkeypatch):
+    from d200x_button_box import gamedetect, games
+
+    d, _ = _daemon(pages=[config.Page(keys={0: {"gamepad": 1}})],
+                   settings=config.Settings(games={"lmu": "/x"}))
+    d.store.profile.game = "lmu"
+    monkeypatch.setattr(games, "detect_hints", lambda: {"lmu": ["LeMansUltimate"]})
+    monkeypatch.setattr(gamedetect, "detect", lambda ad: None)   # not running
+    monkeypatch.setattr(games, "read", lambda g, p: (_ for _ in ()).throw(AssertionError("read called")))
+    d._sync_game_labels()
+    assert "label" not in d.store.profile.pages[0].keys[0]
+
+
+def test_orientation_180_remaps_input_index():
+    # logical profile: key 0 holds button 1, key 12 holds button 13
+    d, pad = _daemon(pages=[config.Page(keys={0: {"gamepad": 1}, 12: {"gamepad": 13}})],
+                     settings=config.Settings(pulse_ms=10, orientation=180))
+    d.dev = FakeDev()
+    # firmware reports *physical* key 12 -> should hit logical key 0 -> button 1
+    d._on_event(InputEvent(12, "key", "press", b""))
+    assert ("press", 1) in pad.events
+    # physical key 0 -> logical key 12 -> button 13
+    d._on_event(InputEvent(0, "key", "press", b""))
+    assert ("press", 13) in pad.events
 
 
 def test_sysload_and_status_mode():

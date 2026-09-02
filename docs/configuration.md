@@ -44,6 +44,7 @@ device:
   brightness: 80           # 0-100, or null to leave it alone
   heartbeat_seconds: 2     # watchdog write that keeps the deck awake; never 0
   grab_keyboard: true      # swallow the deck's own firmware keyboard
+  orientation: 0           # 0 or 180 — how the deck is mounted (see below)
 
 gamepad:
   name: D200x Button Box
@@ -74,7 +75,8 @@ home:
 api:
   host: 127.0.0.1         # 0.0.0.0 to reach it from the LAN (a phone)
   port: 8377
-  token: null             # when set, every /api/* call must send it
+  token: null             # when set, every /api/* call must send it; open the
+                          # web UI once as  http://<ip>:8377/?token=<token>
 ```
 
 ## Profile selection
@@ -86,6 +88,22 @@ The daemon picks a profile in this order:
 2. **Auto-detect** — the first profile whose `auto_detect` substrings match a
    running process.
 3. **`active_profile`** in `settings.yaml`.
+
+## Mounting orientation
+
+`device.orientation` (`0` or `180`, also in Settings → Device → Mounting) is for
+mounting the deck upside down in a rig. At `180` the whole deck works
+"as mounted": the 13 LCD keys reverse, the two aux buttons swap, the encoders
+reverse, and every icon is turned 180°. You configure keys, pages and
+navigation exactly as you see them — key 0 is the top-left key from where you
+sit.
+
+Encoder turn direction is unchanged (spinning the device in its own plane keeps
+clockwise clockwise). The wide status strip is a fixed firmware element: it
+physically stays bottom-right, so at `180` it appears at your top-left, and its
+icon rotates but the firmware clock/load **text** can't — use status mode `off`
+with a custom icon if that bothers you. 90° / 270° aren't supported (the wide
+strip can't fit a portrait grid).
 
 ## Profiles and pages
 
@@ -290,27 +308,40 @@ from your Steam libraries automatically and stored in `settings.games`.
 the game's config and labels each deck key that's bound to the **D200x Button
 Box** controller with its in-game control name.
 
-- If no profile named after the game exists yet, one is **created** from the
-  stable button map, and `settings.games` / `auto_detect` are seeded so the
-  daemon switches to it when the game runs.
+- If no profile named after the game exists yet, one is **created**: the full
+  stable button map, unlabeled, with the game's control names layered on. Every
+  key still sends its button, so you can bind any of them in-game right away.
+  `settings.games` / `auto_detect` are seeded so the daemon switches to the
+  profile when the game runs.
 - If one exists, you get **Update it** or **New profile `<game>-2`**.
 - In-game buttons that don't land on any deck control are listed in the import
   report so you can assign them.
 - `overwrite: false` keeps labels you typed by hand (only matters on an update).
 
-For AC EVO, controls it doesn't recognise are labelled `control <n>` and can't
-be written back; bipolar "cycle" controls import as two entries (`… +` / `… -`).
+While the linked game is running, the daemon also **fills in labels live** — a
+control you bind to the deck in-game shows up on the deck (name + auto icon)
+within a few seconds, without a manual import. It only fills blank keys; it
+never changes a label you set.
+
+For AC EVO, bipolar "cycle" controls import as two entries (`… +` / `… -`).
 
 ### Bind-to-game
 
 For a profile linked to a game, the key editor shows a **bind this button in
 `<game>`** dropdown under a `gamepad` binding. Pick a control and the game's
-config is updated (with autosave on, the moment you pick it). Binding a control
-to a button also clears whatever else was on it.
+config is updated the moment you pick it. Binding a control to a button also
+clears whatever else was on it.
 
 - **LMU** needs the device recorded once: bind any single control to the deck
   inside LMU before the first write, so the game has stored the device GUID.
 - Dragging a key onto another in the web UI moves its in-game binding too.
+- **AC EVO** exposes every control the game knows — the named ones plus every id
+  that has a default keyboard binding, shown as `control <id>` until named.
+  Names are **learned**: bind a `control <id>` to a deck key, give the key a
+  label, and while AC EVO is running the daemon remembers that label for the
+  control (in `game_names.yaml`) — the dropdown and imports then show the real
+  name. `tools/acevo-probe.py` binds all the unnamed ids to spare buttons at
+  once so you can name them from the in-game controls menu in a single pass.
 
 ## The launcher profile
 

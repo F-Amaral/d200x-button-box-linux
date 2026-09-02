@@ -25,6 +25,11 @@ Living doc. Move items between sections as they land.
 - Global **home** button (`settings.home`) with idle auto-revert
 - **Multi-page** profiles (`{page: next|prev|N}`), page switch releases held buttons
 - Split binaries: `d200x-buttonboxd` (daemon) + `d200x-button-box` (CLI)
+- **Mounting orientation** (`device.orientation` 0 / 180) — `orient.py` is the
+  sole logical<->physical index map; daemon remaps input at the device boundary
+  and turns + replaces icons; the web UI's deck follows (strip moves above,
+  status wide-cell to top-left). Everything else stays in logical (as-mounted)
+  coords. Encoder direction unchanged; 90/270 out (wide strip can't go portrait).
 
 ### Phase 2 — control API
 - HTTP + SSE server in the daemon (stdlib `http.server`, no new dep)
@@ -311,13 +316,58 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   Backup `.d200x-bak`; the API refuses while AC EVO runs (it rewrites this file
   live). **Not yet confirmed the game accepts a d200x-written file** — the user
   had AC EVO open during testing.
-- To fill `_CONTROL_IDS` / make everything writable: a systematic pass (bind
-  every menu control to a distinct deck button, then `read` it back).
+- Everything is writable now (see "Game-binding UX" below): `controls()` pulls
+  every id bound to any device + the keyboard file, `write()` takes `control
+  <id>`, names auto-learn from deck labels or a `tools/acevo-probe.py` pass.
 
-### Phase — native KDE app
-- PySide6 `QWebEngineView` wrapping the web UI + a system-tray icon
-  (start/stop daemon, quick profile switch, open UI). `.desktop` + autostart.
-- Thin shell over the same API, no logic duplicated.
+### Game-binding UX (from a use session, 2026-09-02) — DONE
+- **Imported game profiles keep the full button map.** Was: `prune_to_buttons`
+  stripped every slot the game didn't already bind, and the daemon ignores a
+  key with no binding — so a key you wanted to bind in-game did nothing until
+  you added a `gamepad` action by hand. Now: no prune; a created game profile =
+  the stable map, unlabeled, + imported labels on top. `prune_to_buttons` gone.
+  Unlabeled controller keys render a dim button number (`layout.resolve_key_
+  icon`), not a black square — web preview too (`previewURL`).
+- **Live label refresh while the game runs** — `daemon._sync_game_labels()`, on
+  a 3 s tick. If the active profile is linked to a game that's running, re-read
+  its config and fill labels for any *unlabeled* deck key it binds; save +
+  reload. Only fills blanks, never overwrites. `_GSYNC_POLL`.
+- **Phone access** — daemon logs the LAN URL + `ufw allow <port>/tcp` hint when
+  `api.host` isn't localhost (`api.serve`). installation.md troubleshooting row.
+  Not a code bug — the user's `ufw` was blocking the port.
+- **AC EVO — bind without the in-game menu.** Content is a 69 GB encrypted
+  `.kspkg`, no readable control names. But `input_keyboard.
+  keyboardinputconfiguration` (same protobuf) enumerates ~43 more control ids.
+  `ac_evo.controls()` returns every id bound to *any* device in the config
+  (`_known_ids` -> `_blob_ids` scans the wheel/pad blocks + the sibling keyboard
+  file) -- ~56 unnamed on the dev's setup. `ac_evo.write()` accepts `control
+  <id>` and the ` +`/` -` suffix (`_resolve_control`). Controls nobody has bound
+  anywhere still don't appear; bind one in-game and the live sync learns it.
+- **AC EVO name auto-learn.** `ac_evo.learn(path, {button: label})` remembers
+  the labels you put on deck keys, keyed by control id, in
+  `CONFIG_DIR/game_names.yaml` (`ac_evo:` section), which overlays `_CONTROL_
+  IDS` (`_names()` / `_learned()`, mtime-cached). `daemon._sync_game_labels`
+  feeds it every tick while AC EVO runs, and skips `control <id>` placeholders
+  when filling blank labels. So: bind a control, label the key, done -- the name
+  sticks and shows in the dropdown / `read()`. `Game.learn` is the new optional
+  hook. `tools/acevo-probe.py` bulk-binds the unknowns in batches of 38 (pad's
+  40-button limit) with a `.acevo_probe.json` sidecar; `--names notes.txt`
+  merges what you saw, `--clear` undoes the batch. Send the notes to bake the
+  canonical set into `_CONTROL_IDS`. Menu order can't give the ids -- the id
+  space has gaps and a bipolar control is one id, not two.
+- **Control-icons panel** — `buildActions` / `PANELS.actions`, opened from
+  Settings → Default look → "Manage control icons…". Lists every distinct
+  control label across all profiles + its resolved icon; pin / change / clear a
+  glyph per label via `/api/action-icons`. Skips nav/command keys and the
+  `BTN N` placeholders.
+
+## Parked
+
+### Native KDE app — not planned for now
+The web UI + systemd user unit cover it. Revisit only if a tray shortcut
+(start/stop, quick profile switch) turns out to be missed in daily use. Sketch
+if it happens: PySide6 `QWebEngineView` over the same API, `.desktop` +
+autostart, no logic duplicated.
 
 ## Backlog
 - **Widgets / telemetry on keys** — `widget:` field + provider system (clock /

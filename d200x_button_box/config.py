@@ -108,6 +108,7 @@ class Settings:
     brightness: int | None = 80
     heartbeat_seconds: float = 2
     grab_keyboard: bool = True
+    orientation: int = 0             # how the deck is mounted: 0 or 180 degrees
     gamepad_name: str = "D200x Button Box"
     gamepad_buttons: int = 32
     pulse_ms: int = 60
@@ -144,6 +145,7 @@ class Settings:
             brightness=dev.get("brightness", cls.brightness),
             heartbeat_seconds=float(dev.get("heartbeat_seconds", cls.heartbeat_seconds)),
             grab_keyboard=bool(dev.get("grab_keyboard", cls.grab_keyboard)),
+            orientation=180 if int(dev.get("orientation", 0) or 0) == 180 else 0,
             gamepad_name=pad.get("name", cls.gamepad_name),
             gamepad_buttons=int(pad.get("buttons", cls.gamepad_buttons)),
             pulse_ms=int(raw.get("pulse_ms", cls.pulse_ms)),
@@ -170,6 +172,7 @@ class Settings:
                 "brightness": self.brightness,
                 "heartbeat_seconds": self.heartbeat_seconds,
                 "grab_keyboard": self.grab_keyboard,
+                "orientation": self.orientation,
             },
             "gamepad": {"name": self.gamepad_name, "buttons": self.gamepad_buttons},
             "pulse_ms": self.pulse_ms,

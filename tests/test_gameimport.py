@@ -1,4 +1,4 @@
-"""Applying a game import to a deck profile (apply_labels / prune_to_buttons)."""
+"""Applying a game import to a deck profile (apply_labels)."""
 
 from d200x_button_box import config, gameimport
 
@@ -21,12 +21,3 @@ def test_apply_labels_overwrite():
     prof = config.Profile(name="t", pages=[config.Page(keys={0: {"gamepad": 1, "label": "old"}})])
     gameimport.apply_labels(prof, {1: ["New"]}, overwrite=True)
     assert prof.pages[0].keys[0]["label"] == "New"
-
-
-def test_prune_to_buttons_drops_unbound_keys():
-    prof = config.default_profile("acr")
-    n_before = len(prof.pages[0].keys)
-    gameimport.prune_to_buttons(prof, {1, 3})
-    assert set(prof.pages[0].keys) == {0, 2}          # only the kept buttons' keys
-    assert n_before > 2
-    assert prof.pages[0].knobs == {}                  # encoder subs all pruned

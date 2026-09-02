@@ -11,7 +11,10 @@ api:
   token: null         # when set, every /api/* call needs it
 ```
 
-Auth (when `token` is set): send `X-Token: <token>` or `?token=<token>`.
+Auth (when `token` is set): send `X-Token: <token>`, `?token=<token>`, or a
+`d200x_token` cookie. Static files (`/`, `app.js`) are always open so the web UI
+can load — open it once as `…/?token=<token>` and it stores the token
+(localStorage + cookie) for subsequent `/api/*` calls, image previews and SSE.
 All responses allow CORS (`Access-Control-Allow-Origin: *`).
 
 ## Persistent vs transient

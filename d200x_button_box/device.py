@@ -139,7 +139,7 @@ class Device:
         self._write(b"\x00" + protocol.build_small_window(2, time.strftime("%H:%M:%S")))
 
     def send_init(self, page=None, icon_cfg: dict | None = None,
-                  quiet: bool = False, force: bool = False) -> bool:
+                  quiet: bool = False, force: bool = False, orientation: int = 0) -> bool:
         """Upload a button layout for `page` (a config.Page). Without this the
         device never reports input, and it drifts back to standalone mode unless
         repeated.
@@ -151,7 +151,7 @@ class Device:
         """
         from .layout import build_set_buttons
 
-        payload = build_set_buttons(page, icon_cfg)
+        payload = build_set_buttons(page, icon_cfg, orientation)
         h = hashlib.blake2b(payload, digest_size=16).digest()
         if not force and h == getattr(self, "_layout_hash", None):
             return False

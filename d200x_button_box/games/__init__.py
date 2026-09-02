@@ -27,6 +27,7 @@ class Game:
     read: Optional[Callable[..., dict]] = None      # import -> {button (1-based): [control names]}
     controls: Optional[Callable[..., dict]] = None  # bindable list + which are bound to the deck
     write: Optional[Callable[..., dict]] = None     # bind-to-game: point a control at a button
+    learn: Optional[Callable[..., None]] = None     # (path, {button: deck label}) -> remember names
 
 
 from .lmu import GAME as _lmu           # noqa: E402

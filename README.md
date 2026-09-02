@@ -62,8 +62,10 @@ d200x-buttonboxd           # run the daemon (+ config UI on http://localhost:837
 ```
 
 Bind the **D200x Button Box** controller in your game's control settings, and
-open `http://localhost:8377` to edit bindings, labels, icons and profiles (set
-`api.host: 0.0.0.0` + a token in `settings.yaml` to reach it from a phone).
+open `http://localhost:8377` to edit bindings, labels, icons and profiles (to
+reach it from a phone: set `api.host: 0.0.0.0` + `api.token` in `settings.yaml`,
+allow the port through your firewall, and open the UI once as
+`http://<pc-ip>:8377/?token=<token>` — it's remembered after that).
 Already have things bound in a supported game? **Import from a game** pulls the
 control names back onto the deck so you can see what each button does.
 

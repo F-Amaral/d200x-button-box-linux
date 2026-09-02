@@ -258,6 +258,11 @@ def resolve_key_icon(binding: dict, page_style: dict | None,
             glyph = glyphs.label_glyph(label)
     text = binding.get("icon_text") or label or ""
     if not glyph and not text:
+        # an unlabeled controller key: show its button number, dimmed, so the
+        # deck isn't a black square and you can see what to bind in-game
+        if isinstance(binding.get("gamepad"), int):
+            dim = merge_style(style, {"mode": "ring", "fg": "#5b6675"})
+            return render_icon(dim, text=str(binding["gamepad"]), size=size)
         return None
     try:
         return render_icon(style, text=text, glyph=glyph, caption=caption, size=size)
@@ -266,10 +271,12 @@ def resolve_key_icon(binding: dict, page_style: dict | None,
         return None
 
 
-def build_manifest(icons: dict[int, bytes]) -> tuple[bytes, dict[str, bytes]]:
+def build_manifest(icons: dict[int, bytes], orientation: int = 0) -> tuple[bytes, dict[str, bytes]]:
+    from . import orient
+
     manifest: dict[str, dict] = {}
     files: dict[str, bytes] = {}
-    for index in _MANIFEST_INDICES:
+    for index in _MANIFEST_INDICES:   # logical indices
         view: dict = {"Font": _FONT}
         if icons.get(index):
             name = f"Images/{hashlib.md5(icons[index]).hexdigest()}.png"
@@ -278,7 +285,7 @@ def build_manifest(icons: dict[int, bytes]) -> tuple[bytes, dict[str, bytes]]:
         entry: dict = {"State": 0, "ViewParam": [view]}
         if index == protocol.STATUS_KEY_INDEX:
             entry["SmallViewMode"] = 2   # the firmware clock / readout overlay
-        manifest[_cell(index)] = entry
+        manifest[_cell(orient.to_physical(index, orientation))] = entry
     return json.dumps(manifest).encode(), files
 
 
@@ -300,9 +307,12 @@ def _payload_safe(payload: bytes) -> bool:
     return True
 
 
-def build_set_buttons(page=None, icon_cfg: dict | None = None) -> bytes:
+def build_set_buttons(page=None, icon_cfg: dict | None = None, orientation: int = 0) -> bytes:
     """`page` is a config.Page (or None for a blank layout); `icon_cfg` is
-    settings.icon (`{game: {...}, nav: {...}}`)."""
+    settings.icon (`{game: {...}, nav: {...}}`); `orientation` is how the deck is
+    mounted (0 or 180) -- icons are turned and placed to match."""
+    from . import orient
+
     icon_cfg = icon_cfg or {}
     game_base = merge_style(DEFAULT_GAME_STYLE, icon_cfg.get("game"))
     nav_base = merge_style(DEFAULT_NAV_STYLE, icon_cfg.get("nav"))
@@ -325,7 +335,10 @@ def build_set_buttons(page=None, icon_cfg: dict | None = None) -> bytes:
             if png:
                 icons[index] = png
 
-    manifest, files = build_manifest(icons)
+    deg = orient.icon_degrees(orientation)
+    if deg:
+        icons = {i: orient.rotate_png(p, deg) for i, p in icons.items()}
+    manifest, files = build_manifest(icons, orientation)
     payload = _archive(manifest, files, b"")
     tries = 0
     while not _payload_safe(payload) and tries < 64:

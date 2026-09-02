@@ -28,7 +28,7 @@ import queue
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import config
 
@@ -57,6 +57,16 @@ def serve(daemon, api_cfg) -> None:
     daemon._httpd = httpd
     threading.Thread(target=httpd.serve_forever, name="d200x-api", daemon=True).start()
     log.info("API on http://%s:%s", api_cfg.host, api_cfg.port)
+    if api_cfg.host not in ("127.0.0.1", "localhost", "::1"):
+        import socket
+
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+        except OSError:
+            ip = api_cfg.host
+        log.info("reachable on the LAN at http://%s:%s -- if a phone can't connect, "
+                 "open the port: sudo ufw allow %s/tcp (or firewall-cmd)",
+                 ip, api_cfg.port, api_cfg.port)
 
 
 class _Server(ThreadingHTTPServer):
@@ -135,8 +145,18 @@ class Handler(BaseHTTPRequestHandler):
     def _authed(self, qs: str) -> bool:
         if not self.token:
             return True
-        got = self.headers.get("X-Token") or parse_qs(qs).get("token", [None])[0]
+        got = (self.headers.get("X-Token")
+               or parse_qs(qs).get("token", [None])[0]
+               or self._cookie_token())
         return got == self.token
+
+    def _cookie_token(self) -> str | None:
+        raw = self.headers.get("Cookie") or ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "d200x_token":
+                return unquote(v)
+        return None
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -239,13 +259,18 @@ class Handler(BaseHTTPRequestHandler):
             if not path:
                 return self._json({"error": f"no install path for {game}"}, 400)
             created = name not in config.list_profiles()
-            prof = config.default_profile(name) if created else config.load_profile(name)
+            if created:
+                # a fresh game profile keeps the full stable button map (so any
+                # key can be bound in-game straight away) but starts unlabeled —
+                # only controls the game actually binds get a name
+                prof = config.default_profile(name)
+                for page in prof.pages:
+                    for b in page.keys.values():
+                        b.pop("label", None)
+            else:
+                prof = config.load_profile(name)
             report = gameimport.apply_labels(
                 prof, games.read(game, path), overwrite=body.get("overwrite", True))
-            if created:
-                # a new game profile carries only what the game actually binds
-                keep = {int(b) for b in (*report["applied"], *report["skipped"])}
-                gameimport.prune_to_buttons(prof, keep)
             prof.game = game
             config.save_profile(prof)
             if created:

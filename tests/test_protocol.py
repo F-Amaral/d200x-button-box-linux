@@ -232,6 +232,11 @@ def test_resolve_key_icon_precedence_and_register():
     picked = layout.resolve_key_icon({"gamepad": 1, "glyph": "wiper", "label": "Wipers"}, None, game, nav)
     assert kw != picked   # keyword match -> plain icon; explicit pick -> icon + "Wipers"
 
+    # an unlabeled controller key shows its button number (not a black square);
+    # a truly empty binding still renders nothing
+    assert layout.resolve_key_icon({"gamepad": 7}, None, game, nav)
+    assert layout.resolve_key_icon({}, None, game, nav) is None
+
 
 def test_iso_telltale_render_and_tint():
     import io as _io

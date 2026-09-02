@@ -85,6 +85,33 @@ def client(tmp_path, monkeypatch):
     httpd.shutdown()
 
 
+def test_token_auth_header_query_and_cookie(client, monkeypatch):
+    call, _ = client
+    monkeypatch.setattr(api.Handler, "token", "s3cr3t")
+    try:
+        base = f"http://127.0.0.1:{call.port}"
+
+        def get(headers=None, qs=""):
+            req = urllib.request.Request(base + "/api/state" + qs, headers=headers or {})
+            try:
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+
+        assert get() == 401
+        assert get(headers={"X-Token": "s3cr3t"}) == 200
+        assert get(qs="?token=s3cr3t") == 200
+        assert get(headers={"Cookie": "d200x_token=s3cr3t; other=x"}) == 200
+        assert get(headers={"X-Token": "wrong"}) == 401
+        # static files stay open so the page can load and read the token
+        req = urllib.request.Request(base + "/")
+        with urllib.request.urlopen(req, timeout=3) as r:
+            assert r.status == 200
+    finally:
+        api.Handler.token = None
+
+
 def test_state_and_settings(client):
     call, _ = client
     status, state = call("GET", "/api/state")
@@ -94,9 +121,12 @@ def test_state_and_settings(client):
     assert status == 200 and s["gamepad"]["name"] == "D200x Button Box"
 
     s["device"]["brightness"] = 42
+    s["device"]["orientation"] = 180
     status, r = call("PUT", "/api/settings", s)
     assert status == 200 and r["ok"] is True
-    assert config.Settings.load().brightness == 42
+    loaded = config.Settings.load()
+    assert loaded.brightness == 42 and loaded.orientation == 180
+    assert loaded.to_dict()["device"]["orientation"] == 180
 
 
 def test_profiles_crud(client):
@@ -214,7 +244,11 @@ def test_import_endpoint(client, tmp_path):
     status, rep = call("POST", "/api/profiles/lmu-2/import", {"game": "lmu", "path": str(lmu)})
     assert status == 200 and rep["created"] is True and rep["profile"] == "lmu-2"
     assert "lmu-2" in config.list_profiles()
-    assert config.load_profile("lmu-2").page(0).keys[0]["label"] == "Headlights"
+    p2 = config.load_profile("lmu-2").page(0)
+    assert p2.keys[0]["label"] == "Headlights"
+    # the full button map is kept (not pruned), just unlabeled
+    assert p2.keys[5] == {"gamepad": 6}
+    assert p2.knobs
 
 
 def test_activate_and_page(client):

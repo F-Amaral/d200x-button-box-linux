@@ -74,3 +74,4 @@ systemctl --user enable --now d200x-button-box
 | deck shows a colour-circle animation, stops responding | the `heartbeat_seconds` watchdog isn't running — check the daemon is alive; don't set it to 0 |
 | `d200x-button-box debug` prints nothing on keypress | expected before the SET_BUTTONS handshake — `debug` sends it automatically now; if still nothing, capture and open an issue |
 | keys type `calc` / `cmd` into your terminal | the deck's firmware keyboard — the daemon grabs it (`grab_keyboard: true`); make sure the daemon is running |
+| phone can't open the web UI (even with `api.host: 0.0.0.0`) | the host firewall blocks the port. `sudo ufw allow 8377/tcp` (ufw) or `sudo firewall-cmd --add-port=8377/tcp` (firewalld). The daemon logs the LAN URL + this hint on start when `api.host` isn't localhost. |

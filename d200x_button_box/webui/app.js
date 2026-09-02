@@ -2,8 +2,23 @@
 // Phase 1 of the frontend overhaul: tokens + hero deck + docked editor +
 // sim/box registers + autosave-by-default. Dialogs still <dialog> (phase 3).
 
-const KEY_ROWS = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13]];
 const AUX_L = 15, AUX_R = 16, STATUS = 13, KNOBS = [17, 18, 19];
+// deck layout in *logical* (as-mounted) order — recomputed from settings.device.orientation
+let KEY_ROWS = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13]];
+let STRIP = [AUX_L, AUX_R, ...KNOBS];   // the round buttons + encoders, left→right
+let STRIP_BELOW = true;                 // is the strip under the grid, or above it?
+function applyOrientation() {
+  const rot = S.settings?.device?.orientation || 0;
+  if (rot === 180) {
+    KEY_ROWS = [[13, 0, 1, 2], [3, 4, 5, 6, 7], [8, 9, 10, 11, 12]];
+    STRIP = [...KNOBS, AUX_L, AUX_R];
+    STRIP_BELOW = false;
+  } else {
+    KEY_ROWS = [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13]];
+    STRIP = [AUX_L, AUX_R, ...KNOBS];
+    STRIP_BELOW = true;
+  }
+}
 const ACTIONS = ["none", "gamepad", "nav", "key", "command", "profile", "page"];
 const ACTION_LABEL = { nav: "navigate" };
 const ACTION_HINT = {
@@ -47,11 +62,29 @@ let TELLTALE_SET = new Set();
 let ICONV = 0;                       // bumped after an icon edit to bust cached previews
 const bumpIcons = () => { ICONV++; };
 
-const api = (p, o = {}) => fetch("api/" + p, o).then(r => {
-  if (!r.ok) return r.text().then(t => Promise.reject(t || r.status));
-  const c = r.headers.get("content-type") || "";
-  return c.includes("json") ? r.json() : r;
-});
+// API token (only when settings.api.token is set). Pass it once as ?token=… in
+// the URL; it's remembered in localStorage and mirrored to a cookie so <img>
+// previews and the SSE stream authenticate too.
+let API_TOKEN = "";
+try {
+  API_TOKEN = new URLSearchParams(location.search).get("token")
+    || localStorage.getItem("d200x_token") || "";
+  if (API_TOKEN) {
+    localStorage.setItem("d200x_token", API_TOKEN);
+    document.cookie = "d200x_token=" + encodeURIComponent(API_TOKEN)
+      + ";path=/;max-age=31536000;SameSite=Strict";
+  }
+} catch (e) { /* private-mode / no storage */ }
+
+const api = (p, o = {}) => {
+  if (API_TOKEN) o = { ...o, headers: { ...(o.headers || {}), "X-Token": API_TOKEN } };
+  return fetch("api/" + p, o).then(r => {
+    if (r.status === 401) return Promise.reject("unauthorized — open this page as  …/?token=<your api token>  once");
+    if (!r.ok) return r.text().then(t => Promise.reject(t || r.status));
+    const c = r.headers.get("content-type") || "";
+    return c.includes("json") ? r.json() : r;
+  });
+};
 const $ = s => document.querySelector(s);
 const el = (t, p = {}, k = []) => {
   const e = document.createElement(t);
@@ -115,6 +148,7 @@ async function boot() {
   const st = await api("state"); setConn(true); setDeck(st.device.connected);
   const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active; S.profileGames = pl.games || {};
   S.settings = await api("settings");
+  applyOrientation();
   GAMES = await api("games").catch(() => ({}));
   GLYPHS = await api("glyphs").catch(() => GLYPHS);
   ACTION_ICONS = await api("action-icons").catch(() => ({}));
@@ -207,7 +241,7 @@ function setDeck(on) {
 }
 function connectSSE() {
   S.es?.close();
-  S.es = new EventSource("api/events");
+  S.es = new EventSource("api/events" + (API_TOKEN ? "?token=" + encodeURIComponent(API_TOKEN) : ""));
   S.es.onmessage = e => {
     const m = JSON.parse(e.data);
     if (m.type === "state") { setConn(true); setDeck(m.device.connected); }
@@ -365,16 +399,19 @@ function previewURL(b) {
   const q = new URLSearchParams();
   // explicit wins: a chosen glyph, else chosen letters, else derive one.
   // a picked or action-implied glyph carries the label as a caption under it.
+  let dim = false;
   if (b.glyph) { q.set("glyph", b.glyph); if (b.label) q.set("caption", b.label); }
   else if (b.icon_text) q.set("text", b.icon_text);
   else {
     const g = derivedGlyph(b);
     if (g) { q.set("glyph", g); if (b.label) q.set("caption", b.label); }
     else if (b.label) q.set("label", b.label);
+    else if (typeof b.gamepad === "number") { q.set("text", String(b.gamepad)); dim = true; }  // unlabeled controller key
     else return "";
   }
   const s = mergedStyle(b);
   STYLE_KEYS.forEach(k => { if (s[k]) q.set(k, s[k]); });
+  if (dim) { q.set("fg", "#5b6675"); q.set("mode", "ring"); }
   if (ICONV) q.set("v", ICONV);
   return "api/icon-preview?" + q;
 }
@@ -500,28 +537,27 @@ async function moveGameBinds(game, moves) {
     if (S.sel) renderEditor();
   } catch (e) { toast(String(e).slice(0, 80)); }
 }
+function stripCell(id) {
+  if (id === AUX_L || id === AUX_R) return cellFor(id, "round");
+  const kb = curPage().knobs[id] || {};
+  const c = el("div", { class: "cell knob reg-box", tabIndex: 0 });
+  c.dataset.id = id;
+  c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); c.click(); } };
+  if (S.sel && S.sel.kind === "knob" && S.sel.index === id) c.classList.add("sel");
+  c.append(el("div", { class: "lbl", textContent: "⟳ " + labelFor(id) }));
+  const parts = ["left", "right", "press"].filter(s => kb[s] && actOf(kb[s]) !== "none")
+    .map(s => kb[s].label || (s + " " + shortVal(kb[s])));
+  c.append(parts.length
+    ? el("div", { class: "v", textContent: parts.join(" · "), title: parts.join(" · ") })
+    : el("div", { class: "v hinttext", textContent: "turn · click" }));
+  c.onclick = () => selectControl("knob", id);
+  return c;
+}
 function renderDeck() {
   const d = $("#deck"); d.innerHTML = "";
-  for (const row of KEY_ROWS) for (const id of row) d.append(cellFor(id, id === STATUS ? "wide" : ""));
-  // bottom row on the real D200x: the two round aux buttons, then the 3 encoders
-  d.append(cellFor(AUX_L, "round"));
-  d.append(cellFor(AUX_R, "round"));
-  for (const k of KNOBS) {
-    const kb = curPage().knobs[k] || {};
-    const c = el("div", { class: "cell knob reg-box", tabIndex: 0 });
-    c.dataset.id = k;
-    c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); c.click(); } };
-    if (S.sel && S.sel.kind === "knob" && S.sel.index === k) c.classList.add("sel");
-    if (k === (S.settings?.home?.key)) c.append(el("span", { class: "badge", textContent: "HOME" }));
-    c.append(el("div", { class: "lbl", textContent: "⟳ " + labelFor(k) }));
-    const parts = ["left", "right", "press"].filter(s => kb[s] && actOf(kb[s]) !== "none")
-      .map(s => kb[s].label || (s + " " + shortVal(kb[s])));
-    c.append(parts.length
-      ? el("div", { class: "v", textContent: parts.join(" · "), title: parts.join(" · ") })
-      : el("div", { class: "v hinttext", textContent: "turn · click" }));
-    c.onclick = () => selectControl("knob", k);
-    d.append(c);
-  }
+  const grid = () => { for (const row of KEY_ROWS) for (const id of row) d.append(cellFor(id, id === STATUS ? "wide" : "")); };
+  const strip = () => { for (const id of STRIP) d.append(stripCell(id)); };
+  if (STRIP_BELOW) { grid(); strip(); } else { strip(); grid(); }
 }
 function selectControl(kind, index) {
   S.sel = { kind, index }; renderDeck(); renderEditor();
@@ -987,10 +1023,61 @@ function renderEditor() {
 }
 
 // ---- drawer (settings / profiles / import) ------------------
+// -- Control icons panel: pin a symbol to a control name, applied to every deck
+// key with that label across all profiles (the shared action_icons.yaml map) --
+async function buildActions(body) {
+  body.append(el("p", { class: "hint", textContent: "Pin a symbol to a control name — every deck key with that label, in every profile, uses it. Unpinned labels get an automatic icon from keywords." }));
+
+  const labels = new Map();   // display label -> set of profile names it's used in
+  const loaded = await Promise.all(S.profiles.map(n =>
+    api("profiles/" + n).then(p => [n, p]).catch(() => null)));
+  for (const entry of loaded) {
+    if (!entry) continue;
+    const [pname, p] = entry;
+    for (const pg of (p.pages || [p]))
+      for (const b of Object.values(pg.keys || {})) {
+        if (!b || !b.label || derivedGlyph(b)) continue;   // skip nav/command/profile keys (icon from the action)
+        if (/^BTN \d+$/.test(b.label) || b.label === "STATUS") continue;   // the default template's placeholders
+        if (!labels.has(b.label)) labels.set(b.label, new Set());
+        labels.get(b.label).add(pname);
+      }
+  }
+  for (const nl of Object.keys(ACTION_ICONS))          // pinned but not on any key right now
+    if (![...labels.keys()].some(l => normLabel(l) === nl)) labels.set(nl, new Set());
+
+  if (!labels.size) { body.append(el("p", { class: "hint", textContent: "No labelled keys yet — label some deck keys or import a game first." })); return; }
+
+  const list = el("div", { class: "actionlist" });
+  for (const [label, inProfiles] of [...labels].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const nl = normLabel(label), pinned = ACTION_ICONS[nl];
+    const pv = new URLSearchParams(GAME_BASE); pv.set("label", label); if (ICONV) pv.set("v", ICONV);
+    const put = async name => {
+      await api("action-icons", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ label, glyph: name || null }) });
+      if (name) ACTION_ICONS[nl] = name; else delete ACTION_ICONS[nl];
+      bumpIcons(); renderDeck(); if (S.sel) renderEditor();
+      openDrawer("actions");
+    };
+    const acts = el("div", { class: "iconrow" }, [
+      Object.assign(el("button", { class: "ghost", textContent: pinned ? "change" : "pin" }), { onclick: () => openSymbolPicker(pinned, put) }),
+    ]);
+    if (pinned) acts.append(Object.assign(el("button", { class: "ghost", textContent: "clear" }), { onclick: () => put(null) }));
+    list.append(el("div", { class: "actionrow" }, [
+      el("img", { src: "api/icon-preview?" + pv, width: 40, height: 40, class: "lookmini" }),
+      el("div", {}, [
+        el("div", { textContent: label }),
+        el("div", { class: "hint", textContent: (pinned ? "pinned → " + pinned : "auto") + ([...inProfiles].length ? " · " + [...inProfiles].join(", ") : "") }),
+      ]),
+      acts,
+    ]));
+  }
+  body.append(list);
+}
+
 const PANELS = {
   profiles: { title: "Profiles", build: buildProfiles },
   settings: { title: "Settings", build: buildSettings },
   import: { title: "Import from a game", build: buildImport },
+  actions: { title: "Control icons", build: buildActions },
 };
 let DRAWER_PANEL = null;
 function openDrawer(panel) {
@@ -1043,8 +1130,12 @@ const PROF = {
     catch (e) { alert("Duplicate failed: " + e); }
   },
   async create(name) {
-    await api("profiles/" + encodeURIComponent(name), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    await refreshProfiles(); renderChrome();
+    try {
+      await api("profiles/" + encodeURIComponent(name), { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    } catch (e) { toast("Couldn't create “" + name + "”: " + e); return; }
+    await refreshProfiles();
+    await PROF.activate(name);          // land in the new profile so it's obvious it worked
+    toast("Created “" + name + "” — now editing it");
   },
   async remove(n) {
     const r = await api("profiles/" + encodeURIComponent(n), { method: "DELETE" });
@@ -1075,14 +1166,24 @@ function newProfileButton(cls) {
   const btn = el("button", { class: cls || "ghost", textContent: "＋ New profile" });
   btn.onclick = () => {
     const inp = el("input", { placeholder: "name a blank profile", style: "width:100%" });
-    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); if (e.key === "Escape") { box.replaceWith(newProfileButton(cls)); } };
-    inp.onblur = () => { const v = inp.value.trim(); if (v) { PROF.create(v); } else if (!importing) { renderChrome(); } };
-    let importing = false;
+    let importing = false, done = false;
+    const submit = () => {                       // Enter or blur, once
+      if (done) return;
+      const v = inp.value.trim();
+      if (v) { done = true; PROF.create(v); }
+      else if (!importing) renderChrome();
+    };
+    inp.onkeydown = e => {
+      if (e.key === "Enter") { e.preventDefault(); submit(); }
+      else if (e.key === "Escape") box.replaceWith(newProfileButton(cls));
+    };
+    inp.onblur = submit;
     const imp = el("button", { class: "ghost", style: "width:100%;font-size:var(--fs-xs)", textContent: "⇩ or import from a game…" });
     // mousedown fires before the input's blur (which would rebuild + drop this button)
     imp.onmousedown = e => { e.preventDefault(); importing = true; openDrawer("import"); };
     const box = el("div", { style: "display:flex;flex-direction:column;gap:4px" }, [inp, imp]);
-    btn.replaceWith(box); inp.focus();
+    btn.replaceWith(box);
+    setTimeout(() => inp.focus(), 0);
   };
   return btn;
 }
@@ -1186,7 +1287,7 @@ RAIL_MQ.addEventListener("change", () => { renderRail(); });
 async function saveSettings() {
   await api("settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(S.settings) });
 }
-const NAV_TARGETS = [AUX_L, AUX_R, ...KEY_ROWS.flat().filter(i => i !== STATUS), STATUS, ...KNOBS];
+const navTargets = () => [AUX_L, AUX_R, ...KEY_ROWS.flat().filter(i => i !== STATUS), STATUS, ...KNOBS];
 const navBinds = () => (S.settings.nav.binds ||= {});
 async function commitNav() {
   for (const [k, v] of Object.entries(navBinds()))
@@ -1216,7 +1317,7 @@ function navSection(host, compact) {
     host.append(row);
   }
 
-  const free = NAV_TARGETS.filter(i => !(i in navBinds()));
+  const free = navTargets().filter(i => !(i in navBinds()));
   if (free.length) {
     const add = el("select");
     add.append(el("option", { value: "", textContent: "＋ assign a button…" }));
@@ -1234,6 +1335,9 @@ function buildSettings(body) {
   bri.oninput = () => briV.textContent = bri.value;
   const hb = el("input", { type: "number", step: "0.5", min: "0.5", value: s.device.heartbeat_seconds });
   const grab = el("input", { type: "checkbox", checked: s.device.grab_keyboard });
+  const orient = el("select");
+  [[0, "Normal"], [180, "Upside down (180°)"]].forEach(([v, t]) =>
+    orient.append(el("option", { value: v, textContent: t, selected: (s.device.orientation || 0) === v })));
 
   const homeProf = el("select");
   S.profiles.forEach(n => homeProf.append(el("option", { value: n, textContent: n, selected: n === s.home.profile })));
@@ -1242,7 +1346,8 @@ function buildSettings(body) {
   body.append(section("Device",
     fld("Brightness", el("span", {}, [bri, " ", briV])),
     fld("Heartbeat", hb, "write interval (s) that keeps the deck awake — don't set to 0"),
-    fld("Grab keyboard", grab, "swallow the deck's built-in keyboard macros")));
+    fld("Grab keyboard", grab, "swallow the deck's built-in keyboard macros"),
+    fld("Mounting", orient, "how the deck sits in your rig — icons, key order, aux/encoders and navigation all follow. The status strip stays physically bottom-right (firmware); its clock text can't flip.")));
   body.append(section("Switching",
     el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to this profile from anywhere, then returns to auto-detect after the idle timeout." }),
     fld("Home profile", homeProf),
@@ -1272,19 +1377,23 @@ function buildSettings(body) {
   body.append(section("Default look",
     el("p", { class: "hint", textContent: "Baseline for auto-generated icons — blue circle = sim control, grey rounded square = box control. Applied on Save settings." }),
     lookRow("game", "local_gas_station"),
-    lookRow("nav", "layers")));
+    lookRow("nav", "layers"),
+    Object.assign(el("button", { class: "ghost", textContent: "Manage control icons…" }),
+      { onclick: () => openDrawer("actions") })));
 
   body.append(section("Connection",
-    el("p", { class: "hint", html: "API host / port / token: edit <code>settings.yaml</code> and restart the daemon." })));
+    el("p", { class: "hint", html: "API host / port / token: edit <code>settings.yaml</code> and restart the daemon. With a token set, open the UI once as <code>…/?token=&lt;token&gt;</code> (remembered after)." })));
 
   const save = el("button", { class: "primary", textContent: "Save settings" });
   save.onclick = async () => {
     s.device.brightness = Number(bri.value);
     s.device.heartbeat_seconds = Number(hb.value);
     s.device.grab_keyboard = grab.checked;
+    s.device.orientation = Number(orient.value);
     s.home.profile = homeProf.value;
     s.home.revert_seconds = Number(revert.value);
     await saveSettings();
+    applyOrientation();
     renderChrome(); renderDeck(); closeDrawer();
   };
   body.append(el("div", { style: "margin-top:1rem" }, [save]));
@@ -1616,15 +1725,17 @@ $("#profileSel").onchange = async e => {
   await loadProfile(e.target.value);
 };
 
-// deck order for arrow-key navigation
-const DECK_ORDER = [...KEY_ROWS.flat(), AUX_L, AUX_R, ...KNOBS];
+// deck order for arrow-key navigation (follows the on-screen layout)
+const deckOrder = () => STRIP_BELOW
+  ? [...KEY_ROWS.flat(), ...STRIP]
+  : [...STRIP, ...KEY_ROWS.flat()];
 document.addEventListener("keydown", e => {
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !typing) { e.preventDefault(); undo(); return; }
   if (typing || $("#drawer").classList.contains("open") || document.querySelector("dialog[open]")) return;
   if (!S.sel) return;
-  const flat = DECK_ORDER;
+  const flat = deckOrder();
   const cur = flat.indexOf(S.sel.index);
   if (cur < 0) return;
   let next = cur;
@@ -1640,5 +1751,8 @@ window.onbeforeunload = e => { if (S.dirty) { save(); } };
 
 boot().catch(e => {
   console.error(e);
-  $("#editor").innerHTML = '<p class="emptyhint">Cannot reach the daemon API. Is <code>d200x-buttonboxd</code> running?</p>';
+  const auth = String(e).includes("unauthorized");
+  $("#editor").innerHTML = auth
+    ? '<p class="emptyhint"><code>api.token</code> is set. Open this page once as <code>…/?token=&lt;your token&gt;</code> — it\'s remembered after that.</p>'
+    : '<p class="emptyhint">Cannot reach the daemon API. Is <code>d200x-buttonboxd</code> running?</p>';
 });
