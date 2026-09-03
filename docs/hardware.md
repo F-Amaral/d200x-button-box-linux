@@ -45,9 +45,25 @@ payload[2]  marker   0x02 => rotary-encoder event
 payload[3]  action   0x00 release / 0x01 press / 0x02 turn-left / 0x03 turn-right
 ```
 
-Commands the daemon sends: `0x0001` SET_BUTTONS (a zip: `manifest.json` +
-`Images/*.png`), `0x0006` SET_SMALL_WINDOW (`mode|cpu|mem|HH:MM:SS|gpu`),
-`0x000a` SET_BRIGHTNESS. Device replies with a `0x010b` ack.
+Full command set (all reverse-engineered by the community projects in Credits;
+`strmdck` + `companion-surface-d200` cover it):
+
+| cmd | direction | payload | what |
+|--|--|--|--|
+| `0x0001` | out | zip (`manifest.json` + `Images/*.png`) | SET_BUTTONS — the whole layout; **blanks every screen** while it re-renders |
+| `0x000d` | out | same zip, **only the changed cells** | PARTIALLY_UPDATE_BUTTONS — re-renders just those cells, no blank. Needs a prior `0x0001`. |
+| `0x0006` | out | `mode\|cpu\|mem\|HH:MM:SS\|gpu\|24H\|suffix` | SET_SMALL_WINDOW — the wide `3_2` strip (see below) |
+| `0x000a` | out | ascii int | SET_BRIGHTNESS |
+| `0x000b` | out | JSON `{Align,Color,FontName,ShowTitle,Size,Weight}` | SET_LABEL_STYLE — global manifest font (we bake it per-key instead) |
+| `0x000f` | out | empty | LOCKSCREEN — blank + ignore input until unlocked |
+| `0x0010` | out | empty | UNLOCKSCREEN |
+| `0x0101` / `0x0102` | in | `state\|index\|marker\|action` | key / encoder event |
+| `0x0303` | in | ascii string | device info (firmware / serial) |
+| `0x010b` | in | — | ack for a write; ignored |
+
+On the **D200X** the `3_2` slot is a normal (wide) button — `SmallViewMode: 2`
+only tells the firmware to allocate the full 458px width; a partial `0x000d` to
+that cell just replaces its icon.
 
 ### The wide status key ("small window", slot `3_2`, 458×196)
 

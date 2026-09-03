@@ -82,25 +82,52 @@ next_page. Aux L/R default to prev/next page; add a `hold: home` to either.
 three functions on any screen key. `+ page` still relocates anything explicitly
 bound on the aux keys to the new page.
 
-## Widgets / telemetry (backlog — sketch)
+## Widgets / telemetry
 
-A `widget:` field on a key, like the status clock but anywhere:
+### Partial updates — solved (no hardware RE needed)
+
+`0x000d` (PARTIALLY_UPDATE_BUTTONS) takes the **exact same zip** as SET_BUTTONS
+— `manifest.json` + `Images/*.png` — just with fewer cells in the manifest, and
+a different opcode. The firmware re-renders only those cells, no full blank.
+Proven in `companion-surface-d200` (a shipping Companion surface). Needs a prior
+full `0x0001`. So: `layout.build_set_buttons(page, icon_cfg, orientation,
+only={indices})` + `device.push_partial()` under `0x000d`.
+
+Companion's cadence: collect dirty cells, debounce ~75ms, flush as one partial.
+
+### The `widget:` binding
+
+A `widget:` field on any key, rendered by us (not the firmware) and refreshed in
+place:
 
     keys:
-      3: {widget: gear,  source: sim}
-      4: {widget: value, source: "shell: sensors -u | ...", refresh: 5, unit: "°C"}
+      13: {widget: clock}                       # replaces the firmware status clock
+      3:  {widget: sysload}                      # CPU / RAM / GPU bars
+      4:  {widget: shell, cmd: "sensors ...", interval: 5, unit: "°C"}
+      5:  {widget: gear, source: sim}            # later
 
-Daemon runs **providers** on a timer and pushes **partial** LCD updates
-(`OUT_PARTIALLY_UPDATE_BUTTONS = 0x000d`) at 1–4 Hz:
+### Provider registry (`widgets.py`)
 
-- `clock` — built-in (already on the status key via the heartbeat)
-- `system` — CPU/GPU temp, RAM, from `/sys` + `/proc`
-- `mpris` — now playing
-- `shell` — run a command, render stdout
-- `sim` — per-sim telemetry adapters. The hard one under Proton: rF2/LMU shared
-  memory lives inside the Wine prefix; likely need the game's UDP/REST telemetry
-  instead. AC/ACC use `acpmf_*` shared memory. iRacing is Windows-only anyway.
-  Start with LMU, research its telemetry surface when we get here.
+`Widget(kind, render(size, style, orientation) -> png, interval_s)`. The daemon
+holds one instance per provider, ticks them on their interval, and when a
+render's bytes change adds the cell to a dirty set → debounced `push_partial`.
 
-Rendering: number / bar / mini-gauge, threshold colours (fuel < 10 % → red).
-The wide status key can host a richer widget (lap + delta + position).
+- `clock` — HH:MM, 30s tick, only pushes on the minute rollover. Rotation-aware
+  (fixes the upside-down firmware clock). Ships first.
+- `sysload` — reuses `daemon._sysload()`, 2s tick, bar render.
+- `mpris` — now playing (dbus).
+- `shell` — run `cmd`, render stdout, `interval` seconds.
+- `sim` — per-sim telemetry adapters. Under Proton the rF2/LMU shared memory is
+  inside the Wine prefix; likely use the game's UDP/REST telemetry instead.
+  AC/ACC use `acpmf_*` shared memory. Start with LMU; research its telemetry
+  surface when we get here.
+
+Render: number / bar / mini-gauge, threshold colours (fuel < 10 % → red). The
+wide `3_2` slot can host a richer widget (lap + delta + position) — on the D200X
+it's just a normal wide button.
+
+### Free wins from the same protocol dig
+
+- **Idle screensaver** — `0x000f` LOCKSCREEN after N idle minutes, `0x0010`
+  UNLOCKSCREEN + re-push on any input. (Covers the old "idle dim" backlog item.)
+- **Device info** — log the `0x0303` string on connect (firmware / serial).

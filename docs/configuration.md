@@ -45,6 +45,7 @@ device:
   heartbeat_seconds: 2     # watchdog write that keeps the deck awake; never 0
   grab_keyboard: true      # swallow the deck's own firmware keyboard
   orientation: 0           # 0 or 180 — how the deck is mounted (see below)
+  idle_sleep_seconds: 60   # dark the screens after this idle; any key wakes it (0 = never)
 
 gamepad:
   name: D200x Button Box
@@ -195,6 +196,30 @@ knobs:
 Encoder turns fire one `pulse_ms` pulse per detent. The firmware only reports an
 encoder **click on release**, so a click is always a pulse, never a hold — see
 [hardware.md](hardware.md).
+
+## Widgets (live cells)
+
+A `widget:` on a key is drawn by the daemon and refreshed in place — no
+firmware clock/stat overlay, so it rotates with `device.orientation` like any
+icon. It overrides the key's normal look; a `gamepad:`/`command:` on the same
+key still works when pressed.
+
+```yaml
+keys:
+  13: {widget: clock}                                 # replaces the firmware status clock
+  3:  {widget: sysload}                               # CPU · RAM bars
+  4:  {widget: shell, cmd: "sensors ...", interval: 5, unit: "°C"}
+```
+
+| kind | shows | refresh |
+|--|--|--|
+| `clock` | `HH:MM` | on the minute |
+| `sysload` | CPU / RAM bars (red ≥ 90 %) | 2 s |
+| `shell` | first stdout line of `cmd` + `unit` | `interval` seconds (default 5) |
+
+Set `icon_style` for colours/font. On the wide status key, pick "Clock —
+rendered" / "System load — rendered" in the editor. `mpris` / per-sim telemetry
+widgets are planned (see plans/icon-system.md).
 
 ## Key icons
 

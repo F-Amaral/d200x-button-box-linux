@@ -29,8 +29,13 @@ class FakeDev:
         self.inits.append(page)
         return True
 
+    def push_partial(self, page, indices, icon_cfg=None, orientation=0):
+        self.partials = getattr(self, "partials", [])
+        self.partials.append(sorted(indices))
+
     def set_brightness(self, p):
-        pass
+        self.bright = getattr(self, "bright", [])
+        self.bright.append(p)
 
     def heartbeat(self, mode="clock", load=(0, 0, 0)):
         self.beats = getattr(self, "beats", [])
@@ -378,6 +383,66 @@ def test_orientation_180_remaps_input_index():
     # physical key 0 -> logical key 12 -> button 13
     d._on_event(InputEvent(0, "key", "press", b""))
     assert ("press", 13) in pad.events
+
+
+def test_widget_tick_pushes_only_changed_cells(monkeypatch):
+    from d200x_button_box import layout, widgets
+
+    sk = config.protocol.STATUS_KEY_INDEX
+    d, _ = _daemon(pages=[config.Page(keys={
+        sk: {"widget": "clock"},
+        3: {"widget": "sysload"},
+    })])
+    d.dev = FakeDev()
+
+    renders = {sk: iter(["A", "A", "B"]), 3: iter(["x", "y", "z"])}
+    monkeypatch.setattr(layout, "render_cell",
+                        lambda page, idx, cfg, rot: next(renders[idx]).encode())
+    monkeypatch.setattr(widgets, "interval", lambda b: 0.0)   # always due
+
+    d._tick_widgets(100.0)   # baseline A / x already primed? no -> both dirty
+    d._tick_widgets(200.0)   # A unchanged, y changed -> only cell 3
+    d._tick_widgets(300.0)   # B and z changed -> both
+
+    assert d.dev.partials == [[3, sk], [3], [3, sk]]
+
+
+def test_status_mode_widget_disables_firmware_overlay():
+    sk = config.protocol.STATUS_KEY_INDEX
+    d, _ = _daemon(pages=[config.Page(keys={sk: {"widget": "clock"}})])
+    assert d._status_mode() == "off"   # so push_layout sets BACKGROUND mode
+
+
+def test_idle_sleep_and_wake():
+    d, _ = _daemon(pages=[config.Page(keys={0: {"gamepad": 1}})],
+                   settings=config.Settings(pulse_ms=10, idle_sleep_seconds=60, brightness=70))
+    d.dev = FakeDev()
+
+    d._sleep()
+    assert d._asleep and d.dev.bright[-1] == 0
+    d._sleep()                              # idempotent
+    assert d.dev.bright == [0]
+
+    d._wake()
+    assert not d._asleep and d.dev.bright[-1] == 70
+    assert d.dev.inits                      # re-pushed the layout on wake
+    d._wake()                               # idempotent
+    assert d.dev.bright == [0, 70]
+
+
+def test_wake_press_is_swallowed():
+    events = [InputEvent(0, "key", "press", b"")]
+    d, pad = _daemon(pages=[config.Page(keys={0: {"gamepad": 1}})],
+                     settings=config.Settings(pulse_ms=10, idle_sleep_seconds=60))
+    d.dev = FakeDev()
+    d._asleep = True
+    # emulate the loop: asleep + input -> wake, skip dispatch
+    if d._asleep:
+        d._wake()
+    else:
+        for ev in events:
+            d._on_event(ev)
+    assert ("press", 1) not in pad.events
 
 
 def test_sysload_and_status_mode():

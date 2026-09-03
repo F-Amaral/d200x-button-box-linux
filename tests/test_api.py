@@ -122,10 +122,12 @@ def test_state_and_settings(client):
 
     s["device"]["brightness"] = 42
     s["device"]["orientation"] = 180
+    s["device"]["idle_sleep_seconds"] = 120
     status, r = call("PUT", "/api/settings", s)
     assert status == 200 and r["ok"] is True
     loaded = config.Settings.load()
     assert loaded.brightness == 42 and loaded.orientation == 180
+    assert loaded.idle_sleep_seconds == 120
     assert loaded.to_dict()["device"]["orientation"] == 180
 
 

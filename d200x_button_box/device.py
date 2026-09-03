@@ -162,6 +162,16 @@ class Device:
             log.info("sent SET_BUTTONS (%d-byte payload); input should now stream", len(payload))
         return True
 
+    def push_partial(self, page, indices, icon_cfg: dict | None = None,
+                     orientation: int = 0) -> None:
+        """Re-render just `indices` in place (no full-screen blank). Requires a
+        prior :meth:`send_init`."""
+        from .layout import build_set_buttons
+
+        payload = build_set_buttons(page, icon_cfg, orientation, only=set(indices))
+        for pkt in protocol.frame_packets(protocol.CMD_PARTIAL_UPDATE, payload):
+            self._write(b"\x00" + pkt)
+
     def poll(self) -> Iterator[protocol.InputEvent]:
         """Yield pending input events, then return."""
         while True:

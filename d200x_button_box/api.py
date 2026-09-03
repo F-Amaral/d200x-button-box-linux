@@ -346,14 +346,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok, "active": s.active_profile})
 
         if seg == ["icon-preview"] and method == "GET":
-            from . import glyphs, layout
+            from . import glyphs, layout, widgets
 
             q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
             style = {k: q[k] for k in layout.STYLE_KEYS if k in q}
-            glyph = q.get("glyph") or (glyphs.label_glyph(q["label"]) if q.get("label") else None)
             size = None
             if q.get("w") and q.get("h"):
                 size = (int(q["w"]), int(q["h"]))
+            if q.get("widget"):
+                b = {"widget": q["widget"], "cmd": q.get("cmd", ""), "unit": q.get("unit", "")}
+                base = layout.merge_style(layout.DEFAULT_NAV_STYLE, style)
+                return self._raw(widgets.render(b, size, base) or b"", "image/png")
+            glyph = q.get("glyph") or (glyphs.label_glyph(q["label"]) if q.get("label") else None)
             return self._raw(layout.render_icon(
                 style, q.get("text") or q.get("label", ""), glyph, q.get("caption", ""), size), "image/png")
 

@@ -394,6 +394,14 @@ function mergedStyle(b) {
   return Object.assign({}, base, b.icon_style || {});
 }
 function previewURL(b) {
+  if (b.widget) {
+    const q = new URLSearchParams({ widget: b.widget, v: Math.floor(Date.now() / 30000) });
+    if (b.cmd) q.set("cmd", b.cmd);
+    if (b.unit) q.set("unit", b.unit);
+    const s = mergedStyle(b);
+    STYLE_KEYS.forEach(k => { if (s[k]) q.set(k, s[k]); });
+    return "api/icon-preview?" + q;
+  }
   if (iconURL(b.icon)) return iconURL(b.icon);
   if (b.icon) return "";
   const q = new URLSearchParams();
@@ -468,7 +476,7 @@ function cellFor(id, cls) {
   const navCfg = S.settings?.nav?.binds?.[id];
   if (navCfg?.tap === "home" || navCfg?.hold === "home") c.append(el("span", { class: "badge", textContent: "HOME" }));
   const sMode = id === STATUS ? (b.status || (b.clock === false ? "load" : "clock")) : null;
-  if (id === STATUS && sMode !== "off") {
+  if (id === STATUS && !b.widget && sMode !== "off") {
     c.append(el("div", { class: "lbl", textContent: sMode === "load" ? "▤ system load" : "🕐 clock" }));
   } else if (id === STATUS) {
     let u = previewURL(b);
@@ -689,6 +697,51 @@ function frameKind(m, kb) {
   if (m === "image") return null;
   const g = m === "symbol" ? kb.glyph : m === "auto" ? derivedGlyph(kb) : null;
   return (g && TELLTALE_SET.has(g)) ? "colour" : "frame";
+}
+// a key drawn by a daemon-side widget provider (clock / CPU / shell output),
+// refreshed in place via partial update — overrides the normal Look
+function widgetFields(kb) {
+  const g = el("div", { class: "grp" }, [el("h3", { textContent: "Widget" })]);
+  const sel = el("select");
+  [["", "— none —"], ["clock", "Clock (HH:MM)"], ["sysload", "CPU · RAM bars"], ["shell", "Shell output"]]
+    .forEach(([v, t]) => sel.append(el("option", { value: v, textContent: t, selected: v === (kb.widget || "") })));
+  sel.onchange = () => {
+    if (sel.value) { kb.widget = sel.value; delete kb.glyph; delete kb.icon_text; delete kb.icon; }
+    else { delete kb.widget; delete kb.cmd; delete kb.unit; delete kb.interval; }
+    renderEditor(); renderDeck(); touched();
+  };
+  g.append(el("div", { class: "fld" }, [el("label", { textContent: "live value" }), sel]));
+  if (kb.widget === "shell") {
+    const cmd = el("input", { type: "text", value: kb.cmd || "", placeholder: "sh -c '…' — first stdout line is shown" });
+    cmd.oninput = () => { kb.cmd = cmd.value || undefined; renderDeck(); touched(); };
+    const iv = el("input", { type: "number", min: "1", value: kb.interval || 5, style: "width:5rem" });
+    iv.oninput = () => { kb.interval = Number(iv.value) || undefined; touched(); };
+    const un = el("input", { type: "text", value: kb.unit || "", placeholder: "e.g. °C", style: "width:6rem" });
+    un.oninput = () => { kb.unit = un.value || undefined; renderDeck(); touched(); };
+    g.append(el("div", { class: "fld" }, [el("label", { textContent: "command" }), cmd]));
+    g.append(el("div", { class: "fld" }, [el("label", { textContent: "every (s)" }), iv]));
+    g.append(el("div", { class: "fld" }, [el("label", { textContent: "unit" }), un]));
+  }
+  if (kb.widget) {
+    g.append(widgetLook(kb));
+    g.append(el("div", { class: "hint", style: "grid-column:2", textContent:
+      "Rendered by the daemon and refreshed in place. Overrides the Look; rotates with the mounting orientation." }));
+  }
+  return g;
+}
+function widgetLook(kb) {
+  const row = el("div", { class: "iconrow", style: "grid-column:1/-1" });
+  const q = new URLSearchParams({ widget: kb.widget, w: 96, h: 96, v: Math.floor(Date.now() / 30000) });
+  const s = mergedStyle(kb); STYLE_KEYS.forEach(k => { if (s[k]) q.set(k, s[k]); });
+  row.append(el("img", { src: "api/icon-preview?" + q, width: 44, height: 44, class: "lookmini" }));
+  row.append(Object.assign(el("button", { class: "ghost", textContent: "Colour…" }), {
+    onclick: () => openIconStyle(kb, style => {
+      if (Object.keys(style).length) kb.icon_style = style; else delete kb.icon_style;
+      renderEditor(); renderDeck(); touched();
+    }, "Colour — this widget", { noText: true, baseline: NAV_BASE, style: kb.icon_style || {},
+      saveLabel: "Apply", clearLabel: "Reset" }),
+  }));
+  return row;
 }
 function lookField(kb, index) {
   const memk = `${S.name}/${S.page}/${index}`;
@@ -980,26 +1033,34 @@ function renderEditor() {
     }
 
     if (index === STATUS) {
-      const cur = kb.status === "load" || kb.clock === false ? "load" : (kb.status === "off" ? "off" : "clock");
+      const cur = kb.widget === "clock" ? "wclock" : kb.widget === "sysload" ? "wsysload"
+        : (kb.status === "load" || kb.clock === false) ? "load" : kb.status === "off" ? "off" : "clock";
       const sel = el("select");
-      [["clock", "Clock"], ["load", "System load (CPU · RAM)"], ["off", "Custom icon"]].forEach(([v, t]) =>
+      [["clock", "Clock — firmware"], ["wclock", "Clock — rendered (upright, styleable)"],
+       ["load", "System load — firmware"], ["wsysload", "System load — rendered"],
+       ["off", "Custom icon"]].forEach(([v, t]) =>
         sel.append(el("option", { value: v, textContent: t, selected: v === cur })));
       sel.onchange = () => {
-        delete kb.clock;
-        if (sel.value === "clock") delete kb.status; else kb.status = sel.value;
+        delete kb.clock; delete kb.status; delete kb.widget;
+        if (sel.value === "wclock") kb.widget = "clock";
+        else if (sel.value === "wsysload") kb.widget = "sysload";
+        else if (sel.value !== "clock") kb.status = sel.value;
         renderEditor(); renderDeck(); touched();
       };
       const g = el("div", { class: "grp" }, [el("h3", { textContent: "Status strip" })]);
       g.append(el("div", { class: "fld" }, [el("label", { textContent: "shows" }), sel]));
       g.append(el("div", { class: "hint", style: "grid-column:2", textContent:
-        cur === "off"
-          ? "The firmware small window is set to BACKGROUND mode so this wide key shows the icon below."
-          : "The firmware fills this wide key with the clock / system readout." }));
+        cur === "wclock" || cur === "wsysload"
+          ? "We render this and refresh it in place — rotates with the mounting orientation, takes the look below."
+          : cur === "off"
+            ? "The firmware small window is set to BACKGROUND mode so this wide key shows the icon below."
+            : "The firmware fills this wide key with the clock / system readout (can't rotate)." }));
       e.append(g);
       if (cur === "off") e.append(lookField(kb, index));
+      else if (cur === "wclock" || cur === "wsysload") e.append(widgetLook(kb));
     } else {
-      e.append(lookField(kb, index));
-      e.append(holdBlock(kb));
+      if (!kb.widget) { e.append(lookField(kb, index)); e.append(holdBlock(kb)); }
+      e.append(widgetFields(kb));
     }
   } else {
     for (const sub of ["left", "right", "press"]) {
@@ -1335,6 +1396,7 @@ function buildSettings(body) {
   bri.oninput = () => briV.textContent = bri.value;
   const hb = el("input", { type: "number", step: "0.5", min: "0.5", value: s.device.heartbeat_seconds });
   const grab = el("input", { type: "checkbox", checked: s.device.grab_keyboard });
+  const sleep = el("input", { type: "number", step: "10", min: "0", value: s.device.idle_sleep_seconds ?? 60, style: "width:6rem" });
   const orient = el("select");
   [[0, "Normal"], [180, "Upside down (180°)"]].forEach(([v, t]) =>
     orient.append(el("option", { value: v, textContent: t, selected: (s.device.orientation || 0) === v })));
@@ -1347,6 +1409,7 @@ function buildSettings(body) {
     fld("Brightness", el("span", {}, [bri, " ", briV])),
     fld("Heartbeat", hb, "write interval (s) that keeps the deck awake — don't set to 0"),
     fld("Grab keyboard", grab, "swallow the deck's built-in keyboard macros"),
+    fld("Sleep after", sleep, "darks the screens after this many idle seconds; any key wakes it (0 = never)"),
     fld("Mounting", orient, "how the deck sits in your rig — icons, key order, aux/encoders and navigation all follow. The status strip stays physically bottom-right (firmware); its clock text can't flip.")));
   body.append(section("Switching",
     el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to this profile from anywhere, then returns to auto-detect after the idle timeout." }),
@@ -1389,6 +1452,7 @@ function buildSettings(body) {
     s.device.brightness = Number(bri.value);
     s.device.heartbeat_seconds = Number(hb.value);
     s.device.grab_keyboard = grab.checked;
+    s.device.idle_sleep_seconds = Math.max(0, Number(sleep.value) || 0);
     s.device.orientation = Number(orient.value);
     s.home.profile = homeProf.value;
     s.home.revert_seconds = Number(revert.value);

@@ -233,14 +233,25 @@ def resolve_key_icon(binding: dict, page_style: dict | None,
                      game_base: dict, nav_base: dict,
                      size: tuple[int, int] | None = None) -> bytes | None:
     binding = binding or {}
-    if binding.get("icon"):
-        png = _load_icon_png(binding["icon"], size)
-        if png:
-            return png
 
     box = is_box_binding(binding)
     base = nav_base if box else merge_style(game_base, page_style)
     style = merge_style(base, binding.get("icon_style"))
+
+    from . import widgets
+    if widgets.is_widget(binding):
+        try:
+            # widgets are neutral by default (a clock isn't a "sim control")
+            wstyle = merge_style(nav_base, page_style, binding.get("icon_style"))
+            return widgets.render(binding, size, wstyle)
+        except Exception as e:  # noqa: BLE001 - a bad widget must not break the push
+            log.warning("widget %s: %s", binding.get("widget"), e)
+            return None
+
+    if binding.get("icon"):
+        png = _load_icon_png(binding["icon"], size)
+        if png:
+            return png
 
     # explicit wins: a chosen glyph, else chosen letters, else derive one.
     # a glyph the user picked (or one implied by the action, e.g. a profile
@@ -271,12 +282,13 @@ def resolve_key_icon(binding: dict, page_style: dict | None,
         return None
 
 
-def build_manifest(icons: dict[int, bytes], orientation: int = 0) -> tuple[bytes, dict[str, bytes]]:
+def build_manifest(icons: dict[int, bytes], orientation: int = 0,
+                   indices: list[int] | None = None) -> tuple[bytes, dict[str, bytes]]:
     from . import orient
 
     manifest: dict[str, dict] = {}
     files: dict[str, bytes] = {}
-    for index in _MANIFEST_INDICES:   # logical indices
+    for index in (indices if indices is not None else _MANIFEST_INDICES):   # logical indices
         view: dict = {"Font": _FONT}
         if icons.get(index):
             name = f"Images/{hashlib.md5(icons[index]).hexdigest()}.png"
@@ -307,41 +319,68 @@ def _payload_safe(payload: bytes) -> bool:
     return True
 
 
-def build_set_buttons(page=None, icon_cfg: dict | None = None, orientation: int = 0) -> bytes:
+def _cell_icon(page, index, game_base, nav_base) -> bytes | None:
+    """One cell's icon before rotation. Handles the wide status slot's modes."""
+    binding = page.keys.get(index, {}) if page is not None else {}
+    if index == protocol.STATUS_KEY_INDEX:
+        from . import widgets
+        smode = binding.get("status") or ("load" if binding.get("clock") is False else "clock")
+        # clock / load -> the firmware fills the strip; off / widget -> our own wide icon
+        if smode == "off" or widgets.is_widget(binding):
+            return resolve_key_icon(binding, page.style, game_base, nav_base,
+                                    size=(STATUS_W, STATUS_H))
+        return None
+    return resolve_key_icon(binding, page.style, game_base, nav_base)
+
+
+def build_set_buttons(page=None, icon_cfg: dict | None = None, orientation: int = 0,
+                      only: set[int] | None = None) -> bytes:
     """`page` is a config.Page (or None for a blank layout); `icon_cfg` is
     settings.icon (`{game: {...}, nav: {...}}`); `orientation` is how the deck is
-    mounted (0 or 180) -- icons are turned and placed to match."""
+    mounted (0 or 180). `only` restricts the manifest to those cells -- a
+    **partial** update (`CMD_PARTIAL_UPDATE`), which re-renders just those cells
+    without blanking the deck."""
     from . import orient
 
     icon_cfg = icon_cfg or {}
     game_base = merge_style(DEFAULT_GAME_STYLE, icon_cfg.get("game"))
     nav_base = merge_style(DEFAULT_NAV_STYLE, icon_cfg.get("nav"))
-
-    status = page.keys.get(protocol.STATUS_KEY_INDEX, {}) if page is not None else {}
-    smode = status.get("status") or ("load" if status.get("clock") is False else "clock")
+    indices = [i for i in _MANIFEST_INDICES if only is None or i in only]
 
     icons: dict[int, bytes] = {}
     if page is not None:
-        for index in _MANIFEST_INDICES:
-            if index == protocol.STATUS_KEY_INDEX:
-                # clock / load -> the firmware fills the strip; off -> its own wide icon
-                if smode == "off":
-                    png = resolve_key_icon(status, page.style, game_base, nav_base,
-                                           size=(STATUS_W, STATUS_H))
-                    if png:
-                        icons[index] = png
-                continue
-            png = resolve_key_icon(page.keys.get(index, {}), page.style, game_base, nav_base)
+        for index in indices:
+            png = _cell_icon(page, index, game_base, nav_base)
             if png:
                 icons[index] = png
 
     deg = orient.icon_degrees(orientation)
     if deg:
         icons = {i: orient.rotate_png(p, deg) for i, p in icons.items()}
-    manifest, files = build_manifest(icons, orientation)
+    manifest, files = build_manifest(icons, orientation, indices)
     payload = _archive(manifest, files, b"")
     tries = 0
     while not _payload_safe(payload) and tries < 64:
         tries += 1
         payload = _archive(manifest, files, os.urandom(8 * tries).hex().encode())
     return payload
+
+
+def render_cell(page, index: int, icon_cfg: dict | None = None, orientation: int = 0) -> bytes | None:
+    """One cell's final (rotated) icon -- for the widget change-check."""
+    from . import orient
+
+    icon_cfg = icon_cfg or {}
+    png = _cell_icon(page, index,
+                     merge_style(DEFAULT_GAME_STYLE, icon_cfg.get("game")),
+                     merge_style(DEFAULT_NAV_STYLE, icon_cfg.get("nav")))
+    return orient.rotate_png(png, orient.icon_degrees(orientation)) if png else None
+
+
+def widget_cells(page) -> list[int]:
+    """Manifest indices on `page` that carry a `widget:` (daemon ticks these)."""
+    from . import widgets
+
+    if page is None:
+        return []
+    return [i for i in _MANIFEST_INDICES if widgets.is_widget(page.keys.get(i))]

@@ -27,6 +27,7 @@ _RELOAD_POLL = 1.0     # seconds between config-file mtime checks
 _DETECT_POLL = 3.0     # seconds between game-process scans
 _RECONNECT_POLL = 2.0  # seconds between device reconnect attempts
 _GSYNC_POLL = 3.0      # seconds between live game-label syncs (linked game running)
+_WIDGET_POLL = 1.0     # seconds between widget-cell re-render checks
 
 
 class Daemon:
@@ -46,6 +47,10 @@ class Daemon:
         self._reload_now = False
         self._repush = False
         self._last_beat = 0.0
+        self._widget_at: dict[int, float] = {}    # per-cell last render time
+        self._widget_png: dict[int, bytes | None] = {}
+        self._asleep = False                     # screens darked after idle
+        self._last_activity = 0.0                # monotonic, any deck input
         self._run = True
         self._subs: list[queue.Queue] = []            # SSE subscribers (API layer)
         self._httpd = None                            # set by api.serve()
@@ -324,6 +329,8 @@ class Daemon:
             return False
         log.info("device connected (%s)", self.dev.path)
         self._publish({"type": "device", "connected": True})
+        self._asleep = False
+        self._last_activity = time.monotonic()
         return True
 
     def _disconnect_device(self, reason: str) -> None:
@@ -335,12 +342,42 @@ class Daemon:
         self._release_all()
         self._publish({"type": "device", "connected": False})
 
+    # --- idle sleep ----------------------------------------------------
+    def _sleep(self) -> None:
+        """Dark the screens (brightness 0). The heartbeat keeps pinging so the
+        deck stays in host mode; input still arrives and wakes it."""
+        if self._asleep or self.dev is None:
+            return
+        self._asleep = True
+        try:
+            self.dev.set_brightness(0)
+        except DeviceGone as e:
+            self._disconnect_device(str(e))
+            return
+        log.info("deck asleep (idle %ds)", self.settings.idle_sleep_seconds)
+
+    def _wake(self) -> None:
+        if not self._asleep:
+            return
+        self._asleep = False
+        b = self.settings.brightness
+        try:
+            self.dev.set_brightness(80 if b is None else b)
+        except DeviceGone as e:
+            self._disconnect_device(str(e))
+            return
+        self.push_layout(force=True)
+        log.info("deck awake")
+
     # --- deck layout -----------------------------------------------------
     def _status_mode(self) -> str:
-        """What the wide status strip shows: 'clock' | 'load' | 'off' (own icon)."""
-        from . import protocol
+        """What the wide status strip shows: 'clock' | 'load' | 'off' (own icon /
+        widget -- firmware overlay disabled, we render the cell)."""
+        from . import protocol, widgets
 
         b = self.page.keys.get(protocol.STATUS_KEY_INDEX, {})
+        if widgets.is_widget(b):
+            return "off"
         m = b.get("status")
         if m in ("clock", "load", "off"):
             return m
@@ -348,29 +385,37 @@ class Daemon:
 
     def _sysload(self) -> tuple[int, int, int]:
         """(cpu%, mem%, gpu%) from /proc for the status strip's load mode."""
-        cpu = 0
-        try:
-            with open("/proc/stat") as f:
-                parts = [int(x) for x in f.readline().split()[1:]]
-            idle, total = parts[3] + parts[4], sum(parts)
-            prev = getattr(self, "_cpu_prev", None)
-            self._cpu_prev = (idle, total)
-            if prev and total > prev[1]:
-                cpu = round(100 * (1 - (idle - prev[0]) / (total - prev[1])))
-        except OSError:
-            pass
-        mem = 0
-        try:
-            info = {}
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    k, _, v = line.partition(":")
-                    info[k] = int(v.split()[0])
-            if info.get("MemTotal"):
-                mem = round(100 * (1 - info.get("MemAvailable", 0) / info["MemTotal"]))
-        except OSError:
-            pass
-        return max(0, min(100, cpu)), max(0, min(100, mem)), 0
+        from . import widgets
+        return widgets.sysload()
+
+    # --- live cell widgets ------------------------------------------------
+    def _tick_widgets(self, now: float) -> None:
+        """Re-render `widget:` cells on their interval; push the changed ones in
+        place (partial update, no deck blank)."""
+        if self.dev is None:
+            return
+        from . import layout, widgets
+
+        page = self.page
+        dirty: list[int] = []
+        for idx in layout.widget_cells(page):
+            b = page.keys.get(idx, {})
+            if now - self._widget_at.get(idx, 0.0) < widgets.interval(b):
+                continue
+            self._widget_at[idx] = now
+            try:
+                png = layout.render_cell(page, idx, self.settings.icon, self.settings.orientation)
+            except Exception as e:  # noqa: BLE001
+                log.debug("widget cell %s: %s", idx, e)
+                continue
+            if png != self._widget_png.get(idx):
+                self._widget_png[idx] = png
+                dirty.append(idx)
+        if dirty:
+            try:
+                self.dev.push_partial(page, dirty, self.settings.icon, self.settings.orientation)
+            except DeviceGone as e:
+                self._disconnect_device(str(e))
 
     def push_layout(self, force: bool = False) -> None:
         if self.dev is None:
@@ -385,6 +430,12 @@ class Daemon:
             return
         if wrote:
             self._last_beat = 0.0  # refresh the strip now, don't wait for the heartbeat
+        # prime the widget baseline from what the full push just rendered, so the
+        # first tick doesn't fire a redundant partial
+        from . import layout
+        for idx in layout.widget_cells(self.page):
+            self._widget_png.setdefault(
+                idx, layout.render_cell(self.page, idx, self.settings.icon, self.settings.orientation))
 
     def set_page(self, spec: str | int) -> None:
         n = self.profile.n_pages
@@ -405,6 +456,7 @@ class Daemon:
             return
         self._page = new
         self._release_all()
+        self._widget_at.clear(); self._widget_png.clear()
         self.push_layout()
         log.info("page %d/%d", self._page + 1, n)
         self._publish({"type": "page", "index": self._page, "n_pages": n})
@@ -467,6 +519,7 @@ class Daemon:
     def _activate(self) -> None:
         self._page = 0
         self._release_all()
+        self._widget_at.clear(); self._widget_png.clear()   # widgets belong to a page
         self.push_layout()
         log.info("active profile: %s (%d page(s))", self.store.active_name, self.profile.n_pages)
         self._publish({
@@ -494,7 +547,7 @@ class Daemon:
             log.warning("D200x not connected -- API is up; retrying every %.0fs", _RECONNECT_POLL)
         log.info("running (profile: %s) -- ctrl-c to quit", self.store.active_name)
 
-        self._last_beat = last_reload = last_detect = last_conn = last_gsync = 0.0
+        self._last_beat = last_reload = last_detect = last_conn = last_gsync = last_widgets = 0.0
         detected: str | None = None
 
         while self._run:
@@ -506,15 +559,27 @@ class Daemon:
                     self._connect_device()
             else:
                 try:
-                    got_input = False
-                    for ev in self.dev.poll():
-                        got_input = True
-                        log.debug("input: %s %s", ev.name, ev.action)
-                        self._on_event(ev)
+                    events = list(self.dev.poll())
+                    got_input = bool(events)
+                    if got_input:
+                        self._last_activity = now
+                    if self._asleep:
+                        if got_input:
+                            self._wake()            # this press only wakes; it isn't dispatched
+                    else:
+                        for ev in events:
+                            log.debug("input: %s %s", ev.name, ev.action)
+                            self._on_event(ev)
                     self._drain_pending()
 
                     self._tick_hold(now)
                     self._tick_home(now, got_input)
+                    idle = self.settings.idle_sleep_seconds
+                    if idle and not self._asleep and now - self._last_activity > idle:
+                        self._sleep()
+                    if not self._asleep and now - last_widgets > _WIDGET_POLL:
+                        last_widgets = now
+                        self._tick_widgets(now)
 
                     if self.settings.heartbeat_seconds and now - self._last_beat > self.settings.heartbeat_seconds:
                         m = self._status_mode()

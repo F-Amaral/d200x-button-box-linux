@@ -369,10 +369,33 @@ The web UI + systemd user unit cover it. Revisit only if a tray shortcut
 if it happens: PySide6 `QWebEngineView` over the same API, `.desktop` +
 autostart, no logic duplicated.
 
+## Next up
+
+### Widgets / live cells — 1-4 DONE
+`0x000d` partial update = the same zip as SET_BUTTONS with fewer cells, no
+blank (proven in `companion-surface-d200`). No hardware RE.
+
+1. ✅ `layout.build_set_buttons(..., only={idx})` + `layout.render_cell` +
+   `layout.widget_cells`; `device.push_partial()` under `protocol.CMD_PARTIAL_
+   UPDATE` (0x000d).
+2. ✅ `widgets.py` — `is_widget` / `interval` / `render`; `clock` (minute),
+   `sysload` (CPU/RAM bars, reuses the /proc reader), `shell` (stdout + unit).
+3. ✅ `widget:` binding field. Daemon `_tick_widgets` (1s poll) re-renders due
+   cells, pushes only the changed ones; state cleared on profile/page switch,
+   primed from the full push. `_status_mode()` returns `off` for a widget
+   status key so the firmware overlay is disabled. Web UI: status-strip dropdown
+   gains "Clock/System load — rendered"; every key gets a Widget section
+   (clock/sysload/shell + params); `/api/icon-preview?widget=` previews.
+4. ✅ **idle sleep** — `settings.device.idle_sleep_seconds` (default 60, 0=off).
+   Daemon tracks `_last_activity`; on idle → `set_brightness(0)` (the heartbeat
+   keeps pinging so the deck stays in host mode); any key wakes it (that press
+   is swallowed, not dispatched) → restore brightness + `push_layout`. Chose
+   brightness-0 over `0x000f` LOCKSCREEN: no re-push semantics to reverse, and
+   the drift-watchdog keeps working.
+5. Still TODO from the dig: log device info (`0x0303`).
+6. Later: `mpris`, `sim` telemetry providers + `colour_from:` (per-sim adapters).
+
 ## Backlog
-- **Widgets / telemetry on keys** — `widget:` field + provider system (clock /
-  system / mpris / shell now; per-sim telemetry adapters later). Partial LCD
-  updates (`0x000d`). Nothing built yet. See plans/icon-system.md §widgets.
 - **Live key colour from telemetry** — a key's icon colour / fill bar driven by
   a game value so the deck "lights up" like a car dashboard (rev/limiter,
   TC/ABS engaged, low fuel, pit-limiter, DRS). Needs the provider system above +
@@ -388,8 +411,7 @@ autostart, no logic duplicated.
 - Profile export / import (share a setup as a file)
 - "Test" button in the editor — pulse a gamepad button to check it fires
 - `d200x-button-box` CLI subcommands that hit the API (activate / page / state)
-- Idle dim after N minutes
-- Per-key press feedback (flash the key on the deck)
+- Per-key press feedback (flash the key on the deck) — now cheap via `0x000d`
 - Install script + README pass (no AUR needed)
 - **Example setups per sim** — ship ready-made profiles for LMU, AC, AC EVO,
   ACC, iRacing (do this last, once everything else is stable)
