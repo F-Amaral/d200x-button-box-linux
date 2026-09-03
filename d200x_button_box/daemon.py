@@ -356,6 +356,17 @@ class Daemon:
             return
         log.info("deck asleep (idle %ds)", self.settings.idle_sleep_seconds)
 
+    def _tick_sleep(self, now: float, game_running: bool) -> None:
+        """Dark the screens after `idle_sleep_seconds` with no deck input. A
+        running game (auto-detected) counts as activity -- you glance at the
+        deck mid-race without pressing anything."""
+        idle = self.settings.idle_sleep_seconds
+        if game_running:
+            self._last_activity = now
+            self._wake()
+        elif idle and not self._asleep and now - self._last_activity > idle:
+            self._sleep()
+
     def _wake(self) -> None:
         if not self._asleep:
             return
@@ -574,9 +585,7 @@ class Daemon:
 
                     self._tick_hold(now)
                     self._tick_home(now, got_input)
-                    idle = self.settings.idle_sleep_seconds
-                    if idle and not self._asleep and now - self._last_activity > idle:
-                        self._sleep()
+                    self._tick_sleep(now, game_running=bool(detected))
                     if not self._asleep and now - last_widgets > _WIDGET_POLL:
                         last_widgets = now
                         self._tick_widgets(now)

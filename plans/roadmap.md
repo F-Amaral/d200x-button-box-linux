@@ -387,9 +387,10 @@ blank (proven in `companion-surface-d200`). No hardware RE.
    gains "Clock/System load — rendered"; every key gets a Widget section
    (clock/sysload/shell + params); `/api/icon-preview?widget=` previews.
 4. ✅ **idle sleep** — `settings.device.idle_sleep_seconds` (default 60, 0=off).
-   Daemon tracks `_last_activity`; on idle → `set_brightness(0)` (the heartbeat
-   keeps pinging so the deck stays in host mode); any key wakes it (that press
-   is swallowed, not dispatched) → restore brightness + `push_layout`. Chose
+   `daemon._tick_sleep`: on idle → `set_brightness(0)` (the heartbeat keeps
+   pinging so the deck stays in host mode); any key wakes it (that press is
+   swallowed, not dispatched) → restore brightness + `push_layout`. A running
+   auto-detected game counts as activity so it never sleeps mid-race. Chose
    brightness-0 over `0x000f` LOCKSCREEN: no re-push semantics to reverse, and
    the drift-watchdog keeps working.
 5. Still TODO from the dig: log device info (`0x0303`).

@@ -430,6 +430,24 @@ def test_idle_sleep_and_wake():
     assert d.dev.bright == [0, 70]
 
 
+def test_running_game_keeps_deck_awake():
+    d, _ = _daemon(pages=[config.Page()],
+                   settings=config.Settings(pulse_ms=10, idle_sleep_seconds=30))
+    d.dev = FakeDev()
+    d._last_activity = 0.0
+
+    d._tick_sleep(1000.0, game_running=True)     # way past idle, but a game is up
+    assert not d._asleep
+
+    d._tick_sleep(1000.0, game_running=False)    # game gone -> countdown restarts from now
+    assert not d._asleep
+    d._tick_sleep(1031.0, game_running=False)
+    assert d._asleep
+
+    d._tick_sleep(1040.0, game_running=True)     # game relaunched -> wakes
+    assert not d._asleep
+
+
 def test_wake_press_is_swallowed():
     events = [InputEvent(0, "key", "press", b"")]
     d, pad = _daemon(pages=[config.Page(keys={0: {"gamepad": 1}})],

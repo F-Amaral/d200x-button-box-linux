@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -110,6 +111,21 @@ def test_token_auth_header_query_and_cookie(client, monkeypatch):
             assert r.status == 200
     finally:
         api.Handler.token = None
+
+
+def test_abrupt_client_disconnect_is_quiet(client, capsys):
+    import socket
+    import struct
+
+    call, _ = client
+    for _ in range(3):
+        s = socket.create_connection(("127.0.0.1", call.port))
+        s.sendall(b"GET /api/sta")                      # partial request line
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()                                       # -> RST
+    time.sleep(0.2)
+    assert "Traceback" not in capsys.readouterr().err
+    assert call("GET", "/api/state")[0] == 200          # server still fine
 
 
 def test_state_and_settings(client):

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -72,6 +73,13 @@ def serve(daemon, api_cfg) -> None:
 class _Server(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # a browser (phone especially) dropping a keep-alive connection isn't an
+        # error worth a stderr traceback
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
 
 def _save_icon(data: bytes) -> dict:
@@ -130,6 +138,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "unauthorized"}, 401)
             try:
                 return self._api(method, path)
+            except (ConnectionError, TimeoutError, BrokenPipeError):
+                return                                   # client hung up mid-response
             except FileNotFoundError:
                 return self._json({"error": "not found"}, 404)
             except (ValueError, KeyError, TypeError) as e:

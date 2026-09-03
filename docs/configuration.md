@@ -45,7 +45,8 @@ device:
   heartbeat_seconds: 2     # watchdog write that keeps the deck awake; never 0
   grab_keyboard: true      # swallow the deck's own firmware keyboard
   orientation: 0           # 0 or 180 — how the deck is mounted (see below)
-  idle_sleep_seconds: 60   # dark the screens after this idle; any key wakes it (0 = never)
+  idle_sleep_seconds: 60   # dark the screens after this idle; any key — or a
+                           # running (auto-detected) game — wakes it (0 = never)
 
 gamepad:
   name: D200x Button Box
