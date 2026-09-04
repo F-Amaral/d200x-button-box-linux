@@ -31,10 +31,11 @@ class Game:
 
 
 from .lmu import GAME as _lmu           # noqa: E402
+from .ac import GAME as _ac              # noqa: E402
 from .ac_rally import GAME as _ac_rally  # noqa: E402
 from .ac_evo import GAME as _ac_evo      # noqa: E402
 
-ALL: dict[str, Game] = {g.key: g for g in (_lmu, _ac_rally, _ac_evo)}
+ALL: dict[str, Game] = {g.key: g for g in (_lmu, _ac, _ac_rally, _ac_evo)}
 
 
 def get(key: str) -> Optional[Game]:

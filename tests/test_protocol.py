@@ -327,13 +327,21 @@ def test_render_user_icons_only_missing_and_promote(tmp_path, monkeypatch):
 
 def test_settings_roundtrip(tmp_path):
     s = config.Settings(brightness=55, pulse_ms=80, active_profile="lmu")
-    s.auto_detect = {"lmu": ["LeMansUltimate"]}
+    s.auto_detect = {"lmu": ["MyGame"]}
     s.api.port = 9999
     path = tmp_path / "settings.yaml"
     s.save(path)
     back = config.Settings.load(path)
     assert back.brightness == 55 and back.pulse_ms == 80 and back.active_profile == "lmu"
-    assert back.auto_detect == {"lmu": ["LeMansUltimate"]} and back.api.port == 9999
+    assert back.auto_detect == {"lmu": ["MyGame"]} and back.api.port == 9999
+
+
+def test_stale_lmu_hint_migrates_on_load(tmp_path):
+    s = config.Settings()
+    s.auto_detect = {"lmu": ["LeMansUltimate"]}          # the wrong early hint
+    path = tmp_path / "settings.yaml"
+    s.save(path)
+    assert config.Settings.load(path).auto_detect["lmu"] == ["Le Mans Ultimate", "LeMansUltimate"]
 
 
 def test_default_profile_stable_numbering():

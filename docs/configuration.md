@@ -8,7 +8,7 @@ profiles/<name>.yaml   one or more pages of bindings for one context
 ```
 
 `d200x-button-box init` creates the folder with a `settings.yaml` and the
-starter profiles `default`, `lmu`, `ac_evo`, `launcher`.
+starter profiles `default`, `lmu`, `ac`, `launcher`.
 
 Two environment variables help when developing:
 
@@ -58,8 +58,8 @@ hold_ms: 500             # press time that counts as a hold, not a tap
 active_profile: launcher  # used when nothing else selects a profile
 
 auto_detect:              # profile -> case-insensitive substrings in /proc/*/cmdline
-  lmu: [LeMansUltimate]
-  ac_evo: [AssettoCorsaEVO, acevo]
+  lmu: [Le Mans Ultimate]   # a substring of the running exe / its Steam folder
+  ac: [acs.exe]
   ac_rally: [acr.exe, Assetto Corsa Rally]
 
 games:                    # game -> install folder, for import / bind-to-game
@@ -322,11 +322,18 @@ next to the file the first time it's changed.
 | Game | Import | Bind-to-game | Config file |
 |--|:--:|:--:|--|
 | Le Mans Ultimate | ✅ | ✅ | `UserData/player/direct input.json` |
-| Assetto Corsa EVO | ✅ | ✅ | `…/Saved Games/ACE/input_devices.inputdeviceconfiguration` |
+| Assetto Corsa | ✅ | ✅ | `…/Documents/Assetto Corsa/cfg/controls.ini` |
 | Assetto Corsa Rally | ✅ | ✅ | `…/Saved/SaveGames/EnhancedInputUserSettings.sav` |
+| Assetto Corsa EVO | ✅ | ✅ | `…/Saved Games/ACE/input_devices.inputdeviceconfiguration` (still validating) |
 
-Install folders (and the EVO / Rally save files under `compatdata/`) are located
+Install folders (and the save/config files under `compatdata/`) are located
 from your Steam libraries automatically and stored in `settings.games`.
+
+**Assetto Corsa** (and AC Rally / LMU) need the deck registered once: bind any
+single control to it in the game's own controls menu first, so the game records
+the device. AC's `controls.ini` covers Content Manager / CSP actions too
+(`__EXT_*` / `__CM_*`). Button numbers are 0-based in the file, so `BUTTON =
+your gamepad button − 1`.
 
 ### Import from a game
 
@@ -380,7 +387,7 @@ keys:
   0: {label: "LMU + VR", command: "steam steam://rungameid/2399420"}
   1: {label: "CrewChief", command: "sh -c 'cd ~/CrewChiefV4 && ./CrewChief.sh &'"}
   2: {label: "-> LMU", profile: "lmu"}
-  3: {label: "-> AC EVO", profile: "ac_evo"}
+  3: {label: "-> AC", profile: "ac"}
   4: {label: "Auto", profile: "auto"}
 ```
 

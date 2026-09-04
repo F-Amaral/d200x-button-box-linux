@@ -6,22 +6,64 @@ import struct
 import pytest
 
 from d200x_button_box import games
-from d200x_button_box.games import ac_evo, ac_rally, lmu
+from d200x_button_box.games import ac, ac_evo, ac_rally, lmu
 
 
 # --- registry / dispatch --------------------------------------------------- #
 def test_registry_and_capabilities():
     av = games.available()
-    assert av["lmu"]["can_read"] and av["lmu"]["can_write"]
-    assert av["ac_rally"]["can_read"] and av["ac_rally"]["can_write"]
-    assert av["ac_evo"]["can_read"] and av["ac_evo"]["can_write"]
+    for key in ("lmu", "ac", "ac_rally", "ac_evo"):
+        assert av[key]["can_read"] and av[key]["can_write"]
     assert av["ac_rally"]["label"] == "AC Rally"
+    assert av["ac"]["label"] == "Assetto Corsa"
 
 
 def test_detect_hints():
     h = games.detect_hints()
-    assert h["lmu"] == ["LeMansUltimate"]
+    assert "Le Mans Ultimate" in h["lmu"]
     assert "acr.exe" in h["ac_rally"]
+    assert h["ac"] == ["acs.exe"]
+
+
+# --- Assetto Corsa (the original -- controls.ini) ------------------------- #
+_AC_INI = (
+    "[CONTROLLERS]\r\n"
+    "CON0=Some Wheel\r\nPGUID0=0002346E-0000-0000-0000-504944564944\r\n"
+    "CON1=D200x Button Box\r\nPGUID1=D2001209-0000-0000-0000-504944564944\r\n\r\n"
+    "[STEER]\r\nAXLE=0\r\nJOY=0\r\n\r\n"                    # axis -> ignored
+    "[ACTION_HORN]\r\nBUTTON=4\r\nJOY=1\r\nKEY=-1\r\n\r\n"  # our device, button 5
+    "[ACTION_HEADLIGHTS]\r\nBUTTON=-1\r\nJOY=-1\r\nKEY=-1\r\n\r\n"
+    "[GEARUP]\r\nBUTTON=13\r\nJOY=0\r\nKEY=-1\r\n\r\n"      # on the wheel -> not ours
+    "[__EXT_PIT_LIMITER]\r\nBUTTON=-1\r\nJOY=-1\r\n\r\n"
+)
+
+
+def test_ac_read_and_write(tmp_path):
+    p = tmp_path / "controls.ini"
+    p.write_bytes(_AC_INI.encode())
+
+    assert ac.read(p) == {5: ["Horn"]}
+    info = ac.controls(p)
+    assert info["device_present"] and info["bound"] == {"Horn": 5}
+    assert "Headlights" in info["controls"] and "Pit Limiter" in info["controls"]
+
+    ac.write(p, "Headlights", 7)             # new binding
+    ac.write(p, "Horn", 7)                   # takes button 7 -> clears Headlights
+    assert ac.read(p) == {7: ["Horn"]}
+    assert (tmp_path / "controls.ini.d200x-bak").is_file()
+    assert p.read_bytes().count(b"\r\n") > 10 and b"\n" not in p.read_bytes().replace(b"\r\n", b"")
+
+    ac.write(p, "Horn", None)
+    assert ac.read(p) == {}
+
+
+def test_ac_write_needs_device_registered(tmp_path):
+    p = tmp_path / "controls.ini"
+    p.write_bytes(b"[CONTROLLERS]\r\nCON0=Wheel\r\nPGUID0=0002346E-0000-0000-0000-504944564944\r\n\r\n"
+                  b"[ACTION_HORN]\r\nBUTTON=-1\r\nJOY=-1\r\n")
+    assert ac.read(p) == {} and ac.controls(p)["device_present"] is False
+    with pytest.raises(ValueError, match="not in AC's config"):
+        ac.write(p, "Horn", 1)
 
 
 def test_dispatch_errors(monkeypatch):

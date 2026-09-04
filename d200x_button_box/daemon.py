@@ -126,8 +126,7 @@ class Daemon:
         path = self.settings.games.get(game) if game else None
         if not path:
             return
-        hints = games.detect_hints().get(game)
-        if not (hints and gamedetect.detect({game: hints})):
+        if not gamedetect.detect({game: games.detect_hints().get(game, [])}, {game: path}):
             return
         try:
             names = games.read(game, path)
@@ -608,7 +607,7 @@ class Daemon:
                 self._queued_page = None
 
             if now - last_detect > _DETECT_POLL:
-                detected = gamedetect.detect(self.settings.auto_detect)
+                detected = gamedetect.detect(self.settings.auto_detect, self.settings.games)
                 last_detect = now
             if now - last_gsync > _GSYNC_POLL:
                 self._sync_game_labels()

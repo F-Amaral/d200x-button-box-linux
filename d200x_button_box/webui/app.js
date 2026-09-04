@@ -1266,7 +1266,7 @@ function autoRow(profile) {
     });
     chips.append(el("span", { class: "chip" }, [tok, x]));
   });
-  const add = el("input", { class: "chipadd", placeholder: needles.length ? "+ another" : "+ e.g. LeMansUltimate" });
+  const add = el("input", { class: "chipadd", placeholder: needles.length ? "+ another" : "+ e.g. Le Mans Ultimate" });
   add.onkeydown = e => {
     if (e.key !== "Enter") return;
     const v = add.value.trim();

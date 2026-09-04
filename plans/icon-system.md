@@ -128,6 +128,7 @@ it's just a normal wide button.
 
 ### Free wins from the same protocol dig
 
-- **Idle screensaver** — `0x000f` LOCKSCREEN after N idle minutes, `0x0010`
-  UNLOCKSCREEN + re-push on any input. (Covers the old "idle dim" backlog item.)
-- **Device info** — log the `0x0303` string on connect (firmware / serial).
+- **Idle sleep** — DONE, but via `set_brightness(0)` not `0x000f` LOCKSCREEN
+  (no re-push semantics to reverse, the drift-watchdog keeps working).
+- **Device info** — log the `0x0303` string on connect (firmware / serial). TODO.
+- **Drop firmware clock/load** now that the rendered widgets exist. TODO.

@@ -39,12 +39,13 @@ choices back into the game.
 | Game | Import | Bind-to-game |
 |--|:--:|:--:|
 | Le Mans Ultimate | ✅ | ✅ |
-| Assetto Corsa EVO | ✅ | ✅ |
+| Assetto Corsa (+ Content Manager / CSP) | ✅ | ✅ |
 | Assetto Corsa Rally | ✅ | ✅ |
 
 The deck works as a plain controller in **any** game; the table is only about
 the config-file integration. Close the game before writing — each one reads its
-controller config at startup.
+controller config at startup. (Assetto Corsa EVO support exists in the code but
+isn't listed yet — it's still being validated.)
 
 ## Quickstart
 

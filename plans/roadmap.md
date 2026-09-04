@@ -312,10 +312,10 @@ another key to move / swap it. `D200X_NO_DEVICE=1` for headless UI dev.
   still label the button `control N`.
 - `write()` splices **only our device's mapping list** — every other device and
   mapping is kept byte-for-byte, a no-op write is a 0-byte diff. Reuses the
-  existing `Control` bytes on a rebind. Only the 13 named controls are writable.
-  Backup `.d200x-bak`; the API refuses while AC EVO runs (it rewrites this file
-  live). **Not yet confirmed the game accepts a d200x-written file** — the user
-  had AC EVO open during testing.
+  existing `Control` bytes on a rebind. Backup `.d200x-bak`; the API refuses
+  while AC EVO runs (it rewrites this file live). **The game accepts a
+  d200x-written file** — user confirmed live (moved Flashing Lights btn 1 → 6,
+  changed in-game).
 - Everything is writable now (see "Game-binding UX" below): `controls()` pulls
   every id bound to any device + the keyboard file, `write()` takes `control
   <id>`, names auto-learn from deck labels or a `tools/acevo-probe.py` pass.
@@ -393,30 +393,64 @@ blank (proven in `companion-surface-d200`). No hardware RE.
    auto-detected game counts as activity so it never sleeps mid-race. Chose
    brightness-0 over `0x000f` LOCKSCREEN: no re-push semantics to reverse, and
    the drift-watchdog keeps working.
-5. Still TODO from the dig: log device info (`0x0303`).
-6. Later: `mpris`, `sim` telemetry providers + `colour_from:` (per-sim adapters).
+
+### Assetto Corsa (the original) — DONE
+- `games/ac.py`. Config: `compatdata/244210/pfx/…/Documents/Assetto Corsa/cfg/
+  controls.ini` — plain INI, **CRLF** (read/write as bytes to keep it). A button
+  action = a section with `BUTTON=`+`JOY=`; axes have `AXLE=` and are skipped.
+  `JOY` indexes `[CONTROLLERS]` (`CONn`/`PGUIDn`); our pad's product GUID is
+  `D2001209-0000-0000-0000-504944564944`. `BUTTON` is 0-based DInput so
+  `BUTTON = gamepad button − 1`. Needs the deck bound once in AC's menu
+  (`device_present` = our PGUID is in `[CONTROLLERS]`).
+- Covers Content Manager / CSP (`__EXT_*`, `__CM_*`) — ~178 bindable actions on
+  the dev's setup. `_NICE` curates the common ones, rest are de-prefixed.
+- `write()` rewrites only the target section's `BUTTON`/`JOY` lines + clears a
+  conflict on the same button. Backup `.d200x-bak`. Registered in `games.ALL`,
+  `BUILTIN_PROFILE_ORDER` (replaced `ac_evo`), launcher template ("-> AC").
+- **AC EVO dropped from the README** (table + "Built for" line) — code stays,
+  still registered and linkable, just not advertised while it's being validated.
+
+### Auto-detect + sleep fix (2026-09-03) — DONE
+- The `lmu` hint was `LeMansUltimate` but the exe/folder is `Le Mans Ultimate`
+  (with spaces) — LMU never auto-switched, and since the sleep guard keys off
+  the same detection, the deck slept mid-race. Fixed the hint; `from_raw`
+  migrates the stale `["LeMansUltimate"]` on load.
+- `gamedetect.detect(auto_detect, game_paths)` now also matches the game's
+  Steam folder / `compatdata/<appid>` path (from `settings.games`) as a
+  fallback, so a bad hint can't blind it. Daemon + the bind-endpoint 409 check
+  + `_sync_game_labels` all pass `settings.games`.
+
+### Widgets — still open
+- **Drop the firmware default widgets.** Now that `widget: clock` / `widget:
+  sysload` render our own (rotation-aware), retire `status: clock` / `status:
+  load` (firmware-drawn, can't rotate). Make `widget: clock` the default status.
+  Simplifies `daemon._status_mode`, `device.heartbeat` (→ just the keep-alive
+  ping), `protocol.build_small_window` (modes 0/1 unused), the status editor.
+- `mpris` provider — now playing (dbus).
+- `sim` telemetry providers (LMU / AC / ACC) — the hard one; under Proton the
+  shared memory is in the Wine prefix, likely need the game's UDP/REST telemetry
+  instead. Start with LMU.
+- `colour_from:` — a key's fill / colour driven by a telemetry value so the deck
+  lights up like a dashboard (rev limiter, TC/ABS engaged, low fuel, pit
+  limiter, DRS). Needs the `sim` provider + a re-push throttle.
+- richer wide-status widget (lap + delta + position).
+- log device info (`0x0303`) on connect (firmware / serial — debugging).
 
 ## Backlog
-- **Live key colour from telemetry** — a key's icon colour / fill bar driven by
-  a game value so the deck "lights up" like a car dashboard (rev/limiter,
-  TC/ABS engaged, low fuel, pit-limiter, DRS). Needs the provider system above +
-  a `colour_from:` binding (`render_icon` already takes `fg`; daemon re-pushes
-  affected keys on a throttle).
 - **compose `text` / `circle` / `rect` layers** — lettered variants of composed
   icons. Deferred from the icon editor (picker didn't need it).
 - Visual icon editor phase 3–4 — canvas drag for layer anchors; fold the
   stopgap `<dialog>` into the docked panel. (backend + form done.)
-- AC EVO importer — see "AC EVO importer — separate, harder" under Next up
-  (undocumented binary protobuf; AC Rally turned out to be a *different*,
-  tractable format so they no longer share a path).
+- **AC EVO — run the name-discovery pass** — `tools/acevo-probe.py` batch-binds
+  the ~56 unnamed control ids; open AC EVO, note the names, `--names notes.txt`,
+  send them to bake into `_CONTROL_IDS`. (Tooling done; the session hasn't run.)
+- Per-key press feedback (flash the key on the deck) — cheap now via `0x000d`
 - Profile export / import (share a setup as a file)
 - "Test" button in the editor — pulse a gamepad button to check it fires
 - `d200x-button-box` CLI subcommands that hit the API (activate / page / state)
-- Per-key press feedback (flash the key on the deck) — now cheap via `0x000d`
 - Install script + README pass (no AUR needed)
 - **Example setups per sim** — ship ready-made profiles for LMU, AC, AC EVO,
   ACC, iRacing (do this last, once everything else is stable)
 - CONTRIBUTING + CHANGELOG
 - Hardware: physical unplug/replug end-to-end test (reconnect code done, only
   fake-device tested)
-- LMU import "button 24" mapping error the user hit — needs the exact error text

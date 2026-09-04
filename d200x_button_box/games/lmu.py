@@ -103,6 +103,6 @@ def write(install: str | Path, control: str, button: int | None) -> dict:
 
 
 GAME = Game(
-    key="lmu", label="LMU", detect=("LeMansUltimate",),
+    key="lmu", label="LMU", detect=("Le Mans Ultimate", "LeMansUltimate"),
     find=find, read=read, controls=controls, write=write,
 )

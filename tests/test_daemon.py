@@ -318,7 +318,7 @@ def test_sync_game_labels_fills_only_blanks(monkeypatch):
     d.store.profile.game = "lmu"
 
     monkeypatch.setattr(games, "detect_hints", lambda: {"lmu": ["LeMansUltimate"]})
-    monkeypatch.setattr(gamedetect, "detect", lambda ad: "lmu")
+    monkeypatch.setattr(gamedetect, "detect", lambda *a: "lmu")
     monkeypatch.setattr(games, "read", lambda g, p: {1: ["Headlights"], 2: ["Wipers"]})
     saved = []
     monkeypatch.setattr(cfgmod, "save_profile", lambda prof: saved.append(prof))
@@ -346,7 +346,7 @@ def test_sync_game_labels_skips_placeholders_and_feeds_learn(monkeypatch):
     d.store.profile.game = "ac_evo"
 
     monkeypatch.setattr(games, "detect_hints", lambda: {"ac_evo": ["acevo"]})
-    monkeypatch.setattr(gamedetect, "detect", lambda ad: "ac_evo")
+    monkeypatch.setattr(gamedetect, "detect", lambda *a: "ac_evo")
     monkeypatch.setattr(games, "read", lambda g, p: {1: ["control 415"], 2: ["control 9"]})
     monkeypatch.setattr(cfgmod, "save_profile", lambda prof: None)
     learned = []
@@ -366,7 +366,7 @@ def test_sync_game_labels_noop_when_game_not_running(monkeypatch):
                    settings=config.Settings(games={"lmu": "/x"}))
     d.store.profile.game = "lmu"
     monkeypatch.setattr(games, "detect_hints", lambda: {"lmu": ["LeMansUltimate"]})
-    monkeypatch.setattr(gamedetect, "detect", lambda ad: None)   # not running
+    monkeypatch.setattr(gamedetect, "detect", lambda *a: None)   # not running
     monkeypatch.setattr(games, "read", lambda g, p: (_ for _ in ()).throw(AssertionError("read called")))
     d._sync_game_labels()
     assert "label" not in d.store.profile.pages[0].keys[0]

@@ -241,8 +241,8 @@ class Handler(BaseHTTPRequestHandler):
             path = body.get("path") or d.settings.games.get(game) or (games.available().get(game) or {}).get("path")
             if not path:
                 return self._json({"error": f"no install path for {game}"}, 400)
-            needles = d.settings.auto_detect.get(game)
-            if needles and gamedetect.detect({game: needles}):
+            hints = d.settings.auto_detect.get(game) or games.detect_hints().get(game, [])
+            if gamedetect.detect({game: hints}, {game: path}):
                 return self._json({"error": f"{game} is running -- close it first (it reads its config at startup)"}, 409)
             control = body["control"]
             button = None if body.get("clear") else int(body["button"])

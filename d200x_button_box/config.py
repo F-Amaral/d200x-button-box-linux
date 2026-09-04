@@ -132,6 +132,11 @@ class Settings:
     def from_raw(cls, raw: dict) -> "Settings":
         raw = raw or {}
         dev = raw.get("device", {}) or {}
+        auto = {k: list(v) for k, v in (raw.get("auto_detect") or {}).items()}
+        # the LMU exe/folder is "Le Mans Ultimate" (with spaces); an early build
+        # shipped the wrong hint and it stuck in saved configs
+        if auto.get("lmu") == ["LeMansUltimate"]:
+            auto["lmu"] = ["Le Mans Ultimate", "LeMansUltimate"]
         pad = raw.get("gamepad", {}) or {}
         api = raw.get("api", {}) or {}
         home = raw.get("home", {}) or {}
@@ -153,7 +158,7 @@ class Settings:
             pulse_ms=int(raw.get("pulse_ms", cls.pulse_ms)),
             hold_ms=int(raw.get("hold_ms", cls.hold_ms)),
             active_profile=raw.get("active_profile", cls.active_profile),
-            auto_detect={k: list(v) for k, v in (raw.get("auto_detect") or {}).items()},
+            auto_detect=auto,
             games={k: str(v) for k, v in (raw.get("games") or {}).items()},
             icon=merged_icon,
             nav=NavConfig.from_raw(nav, legacy_home_key=home.get("key")),
@@ -443,9 +448,10 @@ def _safe_name(name: str) -> str:
     return keep or "profile"
 
 
-BUILTIN_PROFILE_ORDER = ["default", "lmu", "ac_evo"]
-# ac_rally has no starter profile — "Import from a game" creates it (its layout
-# comes straight from the game's own bindings, unlike the curated lmu profile).
+BUILTIN_PROFILE_ORDER = ["default", "lmu", "ac"]
+# ac_rally / ac_evo have no starter profile — "Import from a game" creates them
+# (their layout comes straight from the game's own bindings, unlike the curated
+# lmu / ac profiles).
 
 # "launcher" is active when no game is running: start things and jump to a game
 # profile from the deck itself. Written verbatim so the examples keep comments.
@@ -466,8 +472,8 @@ keys:
     label: "-> LMU"
     profile: "lmu"
   3:
-    label: "-> AC EVO"
-    profile: "ac_evo"
+    label: "-> AC"
+    profile: "ac"
   4:
     label: "Auto"
     profile: "auto"
