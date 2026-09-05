@@ -1,4 +1,11 @@
-# User service. Install:
+# User service. ExecStart below assumes a `pipx install .` / `pip install
+# --user .` (puts the binary in ~/.local/bin). Installed into a project-local
+# .venv instead (the Quickstart's default)? Don't just `cp` this file -- see
+# "Run as a service" in docs/installation.md for the one-line sed that points
+# ExecStart at your .venv/bin/d200x-buttonboxd, or systemd fails with
+# status=203/EXEC.
+#
+# Install:
 #   mkdir -p ~/.config/systemd/user
 #   cp systemd/d200x-button-box.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload

@@ -58,12 +58,21 @@ d200x-button-box debug
 
 ## Run as a service
 
+The unit's `ExecStart` points at `%h/.local/bin/d200x-buttonboxd`, which only
+exists if you installed with `pipx install .` or `pip install --user .`. The
+Quickstart above uses a project-local `.venv` instead, so **substitute that
+path** when you install the unit (run from the repo root, with `.venv`
+already created):
+
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/d200x-button-box.service ~/.config/systemd/user/
+sed "s|%h/.local/bin|$(pwd)/.venv/bin|" systemd/d200x-button-box.service \
+  > ~/.config/systemd/user/d200x-button-box.service
 systemctl --user daemon-reload
 systemctl --user enable --now d200x-button-box
 ```
+
+If you installed with `pipx`/`--user` instead, plain `cp` (no `sed`) is enough.
 
 ## Troubleshooting
 
@@ -75,3 +84,4 @@ systemctl --user enable --now d200x-button-box
 | `d200x-button-box debug` prints nothing on keypress | expected before the SET_BUTTONS handshake — `debug` sends it automatically now; if still nothing, capture and open an issue |
 | keys type `calc` / `cmd` into your terminal | the deck's firmware keyboard — the daemon grabs it (`grab_keyboard: true`); make sure the daemon is running |
 | phone can't open the web UI (even with `api.host: 0.0.0.0`) | the host firewall blocks the port. `sudo ufw allow 8377/tcp` (ufw) or `sudo firewall-cmd --add-port=8377/tcp` (firewalld). The daemon logs the LAN URL + this hint on start when `api.host` isn't localhost. |
+| service fails with `status=203/EXEC` | `ExecStart` points at a binary that isn't there — almost always a `.venv` install with the unit still pointing at `%h/.local/bin`. Re-install the unit with the `sed` command above (or edit `ExecStart` in `~/.config/systemd/user/d200x-button-box.service` to your `.venv/bin/d200x-buttonboxd` path), then `systemctl --user daemon-reload && systemctl --user restart d200x-button-box`. |
