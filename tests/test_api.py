@@ -27,6 +27,8 @@ class FakeDaemon:
         self.calls = []
         self._subs = []
         self._httpd = None
+        self._showcase = False
+        self._main_dir = config.CONFIG_DIR
 
     def snapshot(self):
         return {"device": {"connected": True}, "profile": {"name": "default"},
@@ -43,6 +45,10 @@ class FakeDaemon:
 
     def request_page(self, spec):
         self.calls.append(("page", spec))
+
+    def request_showcase(self, on, reset=False):
+        self.calls.append(("showcase", on, reset))
+        self._showcase = on
 
     def subscribe(self, q):
         self._subs.append(q)
@@ -152,7 +158,7 @@ def test_profiles_crud(client):
     status, r = call("GET", "/api/profiles")
     assert status == 200 and "launcher" in r["profiles"]
 
-    status, prof = call("GET", "/api/profiles/lmu")
+    status, prof = call("GET", "/api/profiles/example")
     assert status == 200 and "keys" in prof or "pages" in prof
 
     status, r = call("POST", "/api/profiles/testp")
@@ -186,6 +192,35 @@ def test_profile_rename_and_duplicate(client):
 
     status, r = call("POST", "/api/profiles/ghost/rename", {"to": "x"})
     assert status == 404
+
+
+def test_showcase_endpoint(client):
+    call, daemon = client
+    status, r = call("POST", "/api/showcase", {"on": True})
+    assert status == 200 and r["on"] is True
+    assert ("showcase", True, False) in daemon.calls
+
+    call("POST", "/api/showcase", {"on": False, "reset": True})
+    assert ("showcase", False, True) in daemon.calls
+
+
+def test_showcase_promote(client):
+    call, daemon = client
+    daemon._showcase = True
+    config.write_profile_dict("tuned", {"keys": {"0": {"gamepad": 1, "label": "TUNED"}}})
+
+    status, r = call("POST", "/api/showcase/promote", {"profile": "tuned", "as": "keeper"})
+    assert status == 200 and r["profile"] == "keeper"
+    assert config.load_profile("keeper").page(0).keys[0]["label"] == "TUNED"
+
+    status, _ = call("POST", "/api/showcase/promote", {"profile": "tuned", "as": "keeper"})
+    assert status == 409                                   # would clobber
+    status, _ = call("POST", "/api/showcase/promote", {"profile": "tuned", "as": "keeper", "overwrite": True})
+    assert status == 200
+
+    daemon._showcase = False
+    status, _ = call("POST", "/api/showcase/promote", {"profile": "tuned"})
+    assert status == 409                                   # not in showcase
 
 
 def test_delete_active_profile_falls_back_to_home(client):

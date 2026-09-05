@@ -15,7 +15,7 @@ import subprocess
 import threading
 import time
 
-from . import gamedetect, protocol
+from . import config, gamedetect, protocol
 from .config import ConfigStore, Profile, Settings, list_profiles
 from .device import Device, DeviceGone
 from .gamepad import Gamepad
@@ -46,6 +46,11 @@ class Daemon:
         self._home_revert_at: float | None = None     # monotonic deadline to drop back to auto
         self._reload_now = False
         self._repush = False
+        self._wake_ui = False                     # a UI mutation asked the deck to wake
+        self._main_dir = config.CONFIG_DIR        # the user's real config tree
+        self._showcase = False                    # running the isolated showcase sandbox
+        self._switch_cfg = False                  # main loop should (re)point the config tree
+        self._showcase_reset = False              # wipe the sandbox on the way out
         self._last_beat = 0.0
         self._widget_at: dict[int, float] = {}    # per-cell last render time
         self._widget_png: dict[int, bytes | None] = {}
@@ -82,6 +87,7 @@ class Daemon:
                 "pages": [p.name for p in self.profile.pages],
                 "forced": self.store._forced_profile,
             },
+            "showcase": self._showcase,
             "profiles": list_profiles(),
         }
 
@@ -99,6 +105,19 @@ class Daemon:
     def request_repush(self) -> None:
         """Re-upload the current page's layout (e.g. an icon asset changed)."""
         self._repush = True
+
+    def request_wake(self) -> None:
+        """A web-UI change came in -- wake the deck (if wake_on_ui) so you can see it."""
+        self._wake_ui = True
+
+    def request_showcase(self, on: bool, reset: bool = False) -> None:
+        """Enter/leave the showcase sandbox: the whole app (deck, API, web UI)
+        switches to a separate `<config>/showcase/` tree seeded with the starter
+        config, so you can add and edit profiles as a fresh user would with zero
+        effect on your real config. `reset` (on the way out) wipes the sandbox."""
+        self._showcase = bool(on)
+        self._showcase_reset = bool(reset) and not on
+        self._switch_cfg = True
 
     @property
     def settings(self) -> Settings:
@@ -366,6 +385,16 @@ class Daemon:
         elif idle and not self._asleep and now - self._last_activity > idle:
             self._sleep()
 
+    def _tick_wake_ui(self, now: float) -> None:
+        """A web-UI change (bind / profile / settings) counts as activity when
+        `wake_on_ui` is on -- wake the deck and restart the idle countdown."""
+        if not self._wake_ui:
+            return
+        self._wake_ui = False
+        if self.settings.wake_on_ui and self.dev is not None:
+            self._last_activity = now
+            self._wake()
+
     def _wake(self) -> None:
         if not self._asleep:
             return
@@ -537,7 +566,30 @@ class Daemon:
             "name": self.store.active_name,
             "n_pages": self.profile.n_pages,
             "pages": [p.name for p in self.profile.pages],
+            "forced": self.store._forced_profile,
         })
+
+    def _switch_config(self) -> None:
+        """Repoint the whole app at the sandbox tree (or back at the real one)
+        and rebuild the store. `config.use_dir` moves every config path, so the
+        API thread and web UI follow automatically -- the isolation is real."""
+        import shutil
+
+        sandbox = self._main_dir / "showcase"
+        if not self._showcase and self._showcase_reset:
+            shutil.rmtree(sandbox, ignore_errors=True)
+        # ponytail: use_dir rebinds 3 module globals unlocked; an API request
+        # racing this one switch sees a torn path for microseconds. Add a lock
+        # only if that ever actually bites.
+        config.use_dir(sandbox if self._showcase else self._main_dir)
+        if self._showcase:
+            config.bootstrap()                       # seed the sandbox once
+        self.store = ConfigStore()
+        self._kbd.enabled = self.settings.grab_keyboard
+        self._home_revert_at = None
+        log.info("showcase %s (config: %s)", "ON" if self._showcase else "off", config.CONFIG_DIR)
+        self._publish({"type": "showcase", "on": self._showcase})
+        self._activate()
 
     # --- main loop -----------------------------------------------------
     def run(self) -> None:
@@ -599,6 +651,9 @@ class Daemon:
 
             # API requests + config polling run regardless of device state,
             # so the web UI keeps working while the deck is unplugged
+            if self._switch_cfg:
+                self._switch_cfg = False
+                self._switch_config()
             if self._queued_profile is not None:
                 self._apply_profile_binding(self._queued_profile)
                 self._queued_profile = None
@@ -607,7 +662,8 @@ class Daemon:
                 self._queued_page = None
 
             if now - last_detect > _DETECT_POLL:
-                detected = gamedetect.detect(self.settings.auto_detect, self.settings.games)
+                detected = None if self._showcase else gamedetect.detect(
+                    self.settings.auto_detect, self.settings.games)
                 last_detect = now
             if now - last_gsync > _GSYNC_POLL:
                 self._sync_game_labels()
@@ -627,6 +683,7 @@ class Daemon:
                 self._repush = False
                 if self.dev is not None:
                     self.push_layout()
+            self._tick_wake_ui(now)
 
             time.sleep(0.02 if self.dev is None else 0.005)
 

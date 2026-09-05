@@ -19,8 +19,15 @@
   <button id="saveBtn" class="primary" hidden>Save</button>
   <button id="listenBtn" class="ghost" title="press a control on the deck to select it here">Listen</button>
   <button id="iconsBtn" class="ghost">Icons</button>
+  <button id="showcaseBtn" class="ghost" title="preview the bundled example layout — your own config stays untouched">Showcase</button>
   <button id="settingsBtn" class="ghost" title="settings">Settings</button>
 </header>
+
+<div id="showcaseBar" hidden>
+  <span><b>Showcase sandbox</b> — the deck, this page and the API are running a separate config tree. Add and edit profiles freely; your real config is untouched.</span>
+  <button id="showcaseExit" class="ghost">Exit</button>
+  <button id="showcaseDiscard" class="ghost danger">Exit &amp; discard</button>
+</div>
 
 <div class="workspace">
   <aside id="rail" hidden></aside>

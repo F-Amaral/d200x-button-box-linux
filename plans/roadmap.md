@@ -21,7 +21,12 @@ Living doc. Move items between sections as they land.
 - Per-key `label` and `icon` (PNG, auto-resized 196×196)
 - Per-game **profiles**, hot-reload on file change
 - Process **auto-detect** (`/proc/*/cmdline`) → profile
-- **launcher** profile (default) with command + profile-jump examples
+- Starter profiles: **example** (generic sim box, the `active_profile`),
+  **default** (bare stable map), **launcher** (command + profile-jump examples,
+  the **home** target); first-run prompt to keep the example or start clean
+- **Showcase sandbox** (`POST /api/showcase`, header toggle) — `config.use_dir`
+  repoints the whole app at an isolated `showcase/` tree seeded by `bootstrap()`;
+  exit / exit-and-discard / `POST /api/showcase/promote` a profile back
 - Global **home** button (`settings.home`) with idle auto-revert
 - **Multi-page** profiles (`{page: next|prev|N}`), page switch releases held buttons
 - Split binaries: `d200x-buttonboxd` (daemon) + `d200x-button-box` (CLI)

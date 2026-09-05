@@ -23,6 +23,16 @@ from . import protocol
 CONFIG_DIR = Path(os.environ.get("D200X_CONFIG_DIR") or (Path.home() / ".config" / "d200x-button-box"))
 SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
 PROFILES_DIR = CONFIG_DIR / "profiles"
+
+
+def use_dir(d: Path | str) -> None:
+    """Point every config path at `d`. The daemon calls this to enter/leave the
+    showcase sandbox -- a full second config tree the whole app then reads and
+    writes in complete isolation from the user's real one."""
+    global CONFIG_DIR, SETTINGS_PATH, PROFILES_DIR
+    CONFIG_DIR = Path(d)
+    SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
+    PROFILES_DIR = CONFIG_DIR / "profiles"
 # functions, not constants: tests monkeypatch CONFIG_DIR after import, and a
 # frozen path here once wiped the user's real ~/.config icons during a test run.
 def upload_icons_dir() -> Path:
@@ -110,6 +120,7 @@ class Settings:
     grab_keyboard: bool = True
     orientation: int = 0             # how the deck is mounted: 0 or 180 degrees
     idle_sleep_seconds: int = 60     # dark the screens after this idle (0 = never)
+    wake_on_ui: bool = True          # a web-UI change (bind/profile/settings) also wakes the deck
     gamepad_name: str = "D200x Button Box"
     gamepad_buttons: int = 32
     pulse_ms: int = 60
@@ -153,6 +164,7 @@ class Settings:
             grab_keyboard=bool(dev.get("grab_keyboard", cls.grab_keyboard)),
             orientation=180 if int(dev.get("orientation", 0) or 0) == 180 else 0,
             idle_sleep_seconds=max(0, int(dev.get("idle_sleep_seconds", cls.idle_sleep_seconds))),
+            wake_on_ui=bool(dev.get("wake_on_ui", cls.wake_on_ui)),
             gamepad_name=pad.get("name", cls.gamepad_name),
             gamepad_buttons=int(pad.get("buttons", cls.gamepad_buttons)),
             pulse_ms=int(raw.get("pulse_ms", cls.pulse_ms)),
@@ -181,6 +193,7 @@ class Settings:
                 "grab_keyboard": self.grab_keyboard,
                 "orientation": self.orientation,
                 "idle_sleep_seconds": self.idle_sleep_seconds,
+                "wake_on_ui": self.wake_on_ui,
             },
             "gamepad": {"name": self.gamepad_name, "buttons": self.gamepad_buttons},
             "pulse_ms": self.pulse_ms,
@@ -448,37 +461,80 @@ def _safe_name(name: str) -> str:
     return keep or "profile"
 
 
-BUILTIN_PROFILE_ORDER = ["default", "lmu", "ac"]
-# ac_rally / ac_evo have no starter profile — "Import from a game" creates them
-# (their layout comes straight from the game's own bindings, unlike the curated
-# lmu / ac profiles).
+# Starter profiles created by `init`, written verbatim so the comments survive:
+#   example   a generic sim button box -- the deck's starting layout
+#   default   the bare stable button map (BTN 1..13), a clean slate
+#   launcher  what's on the deck between games; where "home" jumps to
+# Per-game profiles (lmu, ac, ac_rally, ...) are created by "Import from a game"
+# when you actually have the game -- their layout comes from its own bindings.
 
-# "launcher" is active when no game is running: start things and jump to a game
-# profile from the deck itself. Written verbatim so the examples keep comments.
+EXAMPLE_TEMPLATE = """\
+# example profile -- the deck's starting layout (settings.yaml: active_profile).
+# A generic sim-racing button box: every key sends a gamepad button (1..13, the
+# stable map in docs/configuration.md), bindable in any game right away.
+#
+# A key's `label:` alone picks its icon ("Headlights" -> a headlight tell-tale).
+# Other things a key can do -- one per key, or a `hold:` for a second one:
+#   key: "F8"              send a keystroke      (needs ydotool / xdotool)
+#   command: "mpv ..."     run a shell command
+#   profile: launcher      switch profile        page: next   switch page
+#   momentary: true        short pulse instead of holding the button
+#   icon_style: {fill: "#c0392b"}   recolour just this key
+# Multi-page (13 keys per page, aux buttons flip): see docs/configuration.md.
+keys:
+  0:  {gamepad: 1,  label: "Headlights"}
+  1:  {gamepad: 2,  label: "Wiper"}
+  2:  {gamepad: 3,  label: "Horn"}
+  3:  {gamepad: 4,  label: "Ignition"}
+  4:  {gamepad: 5,  label: "Engine Start", momentary: true}
+  5:  {gamepad: 6,  label: "TC+"}
+  6:  {gamepad: 7,  label: "TC-"}
+  7:  {gamepad: 8,  label: "ABS"}
+  8:  {gamepad: 9,  label: "Pit Limiter"}
+  9:  {gamepad: 10, label: "Radio", hold: {gamepad: 26}}   # tap = 10, hold = 26
+  10: {gamepad: 11, label: "Look Left"}
+  11: {gamepad: 12, label: "Look Right"}
+  12: {gamepad: 13, label: "Reset Car"}
+  13: {gamepad: 14, label: "Clock", widget: clock}         # wide status key, live clock
+knobs:
+  17: {left: {gamepad: 17}, right: {gamepad: 18}, press: {gamepad: 19}}
+  18: {left: {gamepad: 20}, right: {gamepad: 21}, press: {gamepad: 22}}
+  19: {left: {gamepad: 23}, right: {gamepad: 24}, press: {gamepad: 25}}
+"""
+
 LAUNCHER_TEMPLATE = """\
-# launcher profile -- active when no game is detected (it is the `active_profile`
-# in settings.yaml). Bindings: command / profile / gamepad / key.
-#   profile: lmu        switch to that profile
+# launcher profile -- on the deck when no game is running, and where the "home"
+# button jumps mid-game (settings.yaml: home.profile). For starting things and
+# hopping between profiles. Bindings: profile / command / gamepad / key.
+#   profile: example    switch to that profile
 #   profile: auto       back to auto-detect / active_profile
 #   profile: next|prev  cycle profiles
 keys:
   0:
-    label: "LMU + VR"
-    command: "steam steam://rungameid/2399420"
+    label: "Sim Box"
+    profile: "example"
   1:
-    label: "CrewChief"
-    command: "sh -c 'cd ~/CrewChiefV4 && ./CrewChief.sh &'"
+    label: "Next Profile"
+    profile: "next"
   2:
-    label: "-> LMU"
-    profile: "lmu"
-  3:
-    label: "-> AC"
-    profile: "ac"
-  4:
     label: "Auto"
     profile: "auto"
+  # 3:                                    # a key that launches a game:
+  #   label: "Launch Game"
+  #   command: "steam steam://rungameid/APPID"   # your game's Steam AppID
 knobs: {}
 """
+
+
+def write_example_profile(overwrite: bool = False) -> bool:
+    """Write the bundled `example` profile. Keeps an existing file (it may hold
+    the user's edits) unless `overwrite`. Returns True if it wrote."""
+    p = profile_path("example")
+    if p.exists() and not overwrite:
+        return False
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(EXAMPLE_TEMPLATE)
+    return True
 
 
 def bootstrap() -> None:
@@ -487,7 +543,7 @@ def bootstrap() -> None:
     PROFILES_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_PATH.exists():
         s = Settings()
-        s.active_profile = "launcher"
+        s.active_profile = "example"
         from . import games
 
         s.auto_detect = {g: list(v) for g, v in games.detect_hints().items()}
@@ -505,6 +561,6 @@ def bootstrap() -> None:
             pass
         s.save()
     if not list_profiles():
-        for name in BUILTIN_PROFILE_ORDER:
-            save_profile(default_profile(name))
+        write_example_profile()
+        save_profile(default_profile("default"))
         profile_path("launcher").write_text(LAUNCHER_TEMPLATE)

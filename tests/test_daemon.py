@@ -430,6 +430,54 @@ def test_idle_sleep_and_wake():
     assert d.dev.bright == [0, 70]
 
 
+def test_ui_change_wakes_deck_when_enabled():
+    d, _ = _daemon(pages=[config.Page()],
+                   settings=config.Settings(pulse_ms=10, idle_sleep_seconds=60, brightness=70))
+    d.dev = FakeDev()
+    d._sleep()
+    assert d._asleep
+
+    d.request_wake()
+    d._tick_wake_ui(500.0)
+    assert not d._asleep and d._last_activity == 500.0
+
+    # disabled -> flag consumed, deck stays dark
+    d.store.settings = config.Settings(pulse_ms=10, wake_on_ui=False)
+    d._sleep()
+    d.request_wake()
+    d._tick_wake_ui(600.0)
+    assert d._asleep
+
+
+def test_showcase_sandbox_is_a_separate_isolated_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config, "SETTINGS_PATH", tmp_path / "settings.yaml")
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path / "profiles")
+    config.bootstrap()
+    config.write_profile_dict("mine", {"keys": {"0": {"gamepad": 1, "label": "REAL"}}})
+
+    d, _ = _daemon()
+    d.dev = FakeDev()
+    d._main_dir = tmp_path
+
+    d.request_showcase(True); d._switch_config()
+    assert d._showcase and config.CONFIG_DIR == tmp_path / "showcase"
+    assert d.snapshot()["showcase"] is True
+    assert "mine" not in config.list_profiles()      # real profiles hidden
+    assert "example" in config.list_profiles()       # sandbox seeded from bootstrap
+    config.write_profile_dict("sandbox-only", {"keys": {}})
+    assert not (tmp_path / "profiles" / "sandbox-only.yaml").exists()   # real tree untouched
+
+    d.request_showcase(False); d._switch_config()
+    assert not d._showcase and config.CONFIG_DIR == tmp_path
+    assert "mine" in config.list_profiles() and "sandbox-only" not in config.list_profiles()
+    assert (tmp_path / "showcase" / "profiles" / "sandbox-only.yaml").exists()   # kept
+
+    d.request_showcase(True); d._switch_config()
+    d.request_showcase(False, reset=True); d._switch_config()
+    assert not (tmp_path / "showcase").exists()       # discarded
+
+
 def test_running_game_keeps_deck_awake():
     d, _ = _daemon(pages=[config.Page()],
                    settings=config.Settings(pulse_ms=10, idle_sleep_seconds=30))

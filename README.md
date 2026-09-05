@@ -16,8 +16,9 @@ or Proton/Wine — sees an ordinary controller you can bind.
   buttons and 3 clickable encoders map to a virtual controller any game can bind
   — native or Proton/Wine. Encoder detents fire one pulse each.
 - **Per-game profiles**, switched automatically when a game's process appears
-  and dropped when it quits. A `launcher` profile sits on the deck in between
-  with buttons that start games and jump into profiles.
+  and dropped when it quits. Between games the deck shows your `active_profile`;
+  a `launcher` profile (buttons that start games and jump into profiles) is one
+  press away on the **home** button.
 - **Multi-page layouts** — 13 keys × N pages, paged with the aux buttons.
 - **Labels and icons** on the keys: text, an uploaded image, ISO 7000
   automotive tell-tales (headlights, indicators, wipers, TC, ABS…), or Material
@@ -58,12 +59,17 @@ sudo udevadm control --reload && sudo udevadm trigger --attr-match=idVendor=2207
 echo uinput | sudo tee /etc/modules-load.d/uinput.conf && sudo modprobe uinput
 # then physically unplug/replug the deck
 
-d200x-button-box init      # ~/.config/d200x-button-box/
+d200x-button-box init      # ~/.config/d200x-button-box/ + starter profiles
 d200x-buttonboxd           # run the daemon (+ config UI on http://localhost:8377)
 ```
 
-Bind the **D200x Button Box** controller in your game's control settings, and
-open `http://localhost:8377` to edit bindings, labels, icons and profiles (to
+`init` drops an **`example`** profile on the deck — a generic sim button box
+(headlights, wipers, TC, ABS, pit limiter, encoders…) where every key is already
+a bindable gamepad button. The web UI's first-run prompt lets you keep it or
+start from a clean map; the **Showcase** button opens a throwaway sandbox config
+you can experiment in without touching your real setup. Bind the **D200x Button
+Box** controller in your game's control settings, then open
+`http://localhost:8377` to edit bindings, labels, icons and profiles (to
 reach it from a phone: set `api.host: 0.0.0.0` + `api.token` in `settings.yaml`,
 allow the port through your firewall, and open the UI once as
 `http://<pc-ip>:8377/?token=<token>` — it's remembered after that).

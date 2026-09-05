@@ -111,6 +111,17 @@ header .spacer { flex: 1; }
 
 .deckwarn { color: var(--danger); font-size: var(--fs-xs); font-weight: 600; }
 
+#showcaseBar[hidden] { display: none; }
+#showcaseBar {
+  display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-4);
+  background: rgba(74, 158, 255, .14);
+  border-bottom: 1px solid var(--sim);
+  font-size: var(--fs-xs);
+  position: sticky; top: 0; z-index: 19;
+}
+#showcaseBar span { flex: 1; }
+
 /* ---- workspace: [rail] deck (hero) [editor] --------------------- */
 .workspace {
   display: grid;

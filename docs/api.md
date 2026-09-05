@@ -25,6 +25,9 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 - **Transient** actions (`POST /api/activate`, `POST /api/page`) only change the
   running state; they don't touch the files. `activate` sets a manual override —
   `{"profile": "auto"}` clears it.
+- **Showcase** (`POST /api/showcase`) repoints every path — the whole app then
+  reads and writes an isolated `showcase/` config tree until you switch back.
+  `GET /api/state` reports `showcase: true｜false`.
 
 ## Endpoints
 
@@ -46,6 +49,8 @@ All responses allow CORS (`Access-Control-Allow-Origin: *`).
 | GET | `/api/action-icons` | | `{label: glyph}` — glyphs pinned to control labels |
 | PUT | `/api/action-icons` | `{label, glyph}` (`glyph: null` to clear) | pin / unpin a glyph, then re-push the deck |
 | POST | `/api/activate` | `{"profile": "lmu"｜"auto"}` | manual override |
+| POST | `/api/showcase` | `{"on": true｜false, "reset"?: true}` | switch the whole app to / from the isolated `showcase/` sandbox config tree; `reset` (with `on:false`) deletes the sandbox |
+| POST | `/api/showcase/promote` | `{"profile", "as"?, "overwrite"?}` | copy a sandbox profile into the real config (409 if not in showcase, or if `as` exists without `overwrite`) |
 | POST | `/api/page` | `{"page": "next"｜"prev"｜N}` | |
 | POST | `/api/icons` | raw image bytes (`Content-Type: image/*`) | saves a 196×196 PNG, returns `{path, url}` |
 | GET | `/api/icons/<name>` | | serves an uploaded icon |

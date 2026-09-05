@@ -7,8 +7,42 @@ settings.yaml          device, gamepad, API, profile selection, navigation
 profiles/<name>.yaml   one or more pages of bindings for one context
 ```
 
-`d200x-button-box init` creates the folder with a `settings.yaml` and the
-starter profiles `default`, `lmu`, `ac`, `launcher`.
+`d200x-button-box init` creates the folder with a `settings.yaml` and three
+starter profiles:
+
+- **`example`** — a generic sim button box, and the deck's starting layout.
+  Every key sends a gamepad button (the stable map below) with a sensible label
+  and auto-picked icon; edit it to taste or replace it.
+- **`default`** — the bare stable map (`BTN 1`…`BTN 13`), a clean slate.
+- **`launcher`** — what's on the deck when no game is running, and where the
+  **home** button jumps to. Starts things and hops between profiles.
+
+Per-game profiles (`lmu`, `ac`, …) are created by **Import from a game** once you
+actually have the game — their layout comes from its own bindings.
+
+On the first visit the web UI offers **Explore the example** or **Start from
+scratch** (which switches `active_profile` to `default`). Either way the
+`example` profile stays on disk.
+
+### Showcase sandbox
+
+The **Showcase** button in the web UI header switches the **whole app** — deck,
+web UI and API — to a second, isolated config tree at
+`~/.config/d200x-button-box/showcase/`, seeded with a fresh `init` (the three
+starter profiles + default settings). It's a sandbox: add profiles, edit
+bindings and settings, run through what a new user would see — none of it
+touches your real config.
+
+- **Exit** — switch back to your real config. The sandbox stays on disk, so you
+  can re-enter and pick up where you left off.
+- **Exit & discard** — switch back and delete the sandbox.
+- **Promote** (`POST /api/showcase/promote`) — copy a sandbox profile into your
+  real config, as a new name or over an existing one.
+
+Auto game-detection is paused while the sandbox is active. Entering the sandbox
+is runtime-only: a daemon restart always comes up on your real config. (Uploaded
+key images referenced by absolute path won't follow a promoted profile — glyphs
+and labels do.)
 
 Two environment variables help when developing:
 
@@ -47,6 +81,8 @@ device:
   orientation: 0           # 0 or 180 — how the deck is mounted (see below)
   idle_sleep_seconds: 60   # dark the screens after this idle; any key — or a
                            # running (auto-detected) game — wakes it (0 = never)
+  wake_on_ui: true         # a change from the web UI (bind / profile / settings)
+                           # also wakes the deck so you see it live
 
 gamepad:
   name: D200x Button Box
@@ -55,7 +91,7 @@ gamepad:
 pulse_ms: 60              # how long a knob step / momentary press is held
 hold_ms: 500             # press time that counts as a hold, not a tap
 
-active_profile: launcher  # used when nothing else selects a profile
+active_profile: example   # used when nothing else selects a profile
 
 auto_detect:              # profile -> case-insensitive substrings in /proc/*/cmdline
   lmu: [Le Mans Ultimate]   # a substring of the running exe / its Steam folder
@@ -378,18 +414,17 @@ clears whatever else was on it.
 
 ## The launcher profile
 
-`launcher` is the default `active_profile` — what's on the deck when no game is
-running. Use `{command:}` to start a game or CrewChief and `{profile:}` to jump
-into a game profile:
+`launcher` is where the **home** button jumps to, and a handy in-between screen.
+Use `{profile:}` to jump between profiles and `{command:}` to start a game or
+CrewChief:
 
 ```yaml
 keys:
-  0: {label: "LMU + VR", command: "steam steam://rungameid/2399420"}
-  1: {label: "CrewChief", command: "sh -c 'cd ~/CrewChiefV4 && ./CrewChief.sh &'"}
-  2: {label: "-> LMU", profile: "lmu"}
-  3: {label: "-> AC", profile: "ac"}
-  4: {label: "Auto", profile: "auto"}
+  0: {label: "Sim Box", profile: "example"}
+  1: {label: "Next Profile", profile: "next"}
+  2: {label: "Auto", profile: "auto"}
+  3: {label: "LMU", command: "steam steam://rungameid/2399420"}
 ```
 
 When a game starts, `auto_detect` switches to its profile on its own; on quit
-the deck falls back to `launcher`.
+the deck falls back to `active_profile`.

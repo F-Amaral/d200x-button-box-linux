@@ -360,6 +360,20 @@ def test_default_profile_stable_numbering():
     assert len(nums) == len(set(nums))
 
 
+def test_write_example_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    assert config.write_example_profile() is True
+    assert "example" in config.list_profiles()
+    p = config.load_profile("example").page(0)
+    assert p.keys[0]["label"] == "Headlights" and p.keys[0]["gamepad"] == 1
+
+    config.write_profile_dict("example", {"keys": {"0": {"gamepad": 1, "label": "MINE"}}})
+    assert config.write_example_profile() is False                 # kept
+    assert config.load_profile("example").page(0).keys[0]["label"] == "MINE"
+    assert config.write_example_profile(overwrite=True) is True     # forced
+    assert config.load_profile("example").page(0).keys[0]["label"] == "Headlights"
+
+
 def test_config_dir_env_override(tmp_path):
     import subprocess
     import sys

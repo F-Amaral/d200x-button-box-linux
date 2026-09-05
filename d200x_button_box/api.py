@@ -137,7 +137,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authed(parsed.query):
                 return self._json({"error": "unauthorized"}, 401)
             try:
-                return self._api(method, path)
+                out = self._api(method, path)
+                if method != "GET":
+                    self.daemon.request_wake()   # a UI mutation -- wake the deck to show it
+                return out
             except (ConnectionError, TimeoutError, BrokenPipeError):
                 return                                   # client hung up mid-response
             except FileNotFoundError:
@@ -443,6 +446,29 @@ class Handler(BaseHTTPRequestHandler):
         if seg == ["activate"] and method == "POST":
             d.request_profile(str(self._read_body().get("profile") or "auto"))
             return self._json({"ok": True})
+
+        if seg == ["showcase"] and method == "POST":
+            # switch the whole app to / from the isolated sandbox config tree
+            body = self._read_body()
+            on = bool(body.get("on"))
+            d.request_showcase(on, reset=bool(body.get("reset")))
+            return self._json({"ok": True, "on": on})
+
+        if seg == ["showcase", "promote"] and method == "POST":
+            # copy a sandbox profile into the real config (a keeper you tuned)
+            if not d._showcase:
+                return self._json({"error": "not in showcase mode"}, 409)
+            body = self._read_body()
+            src = config.PROFILES_DIR / f"{config._safe_name(body['profile'])}.yaml"
+            if not src.is_file():
+                raise FileNotFoundError(body["profile"])
+            dst_name = config._safe_name(body.get("as") or body["profile"])
+            dst = d._main_dir / "profiles" / f"{dst_name}.yaml"
+            if dst.exists() and not body.get("overwrite"):
+                return self._json({"error": f"'{dst_name}' exists in your config"}, 409)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(src.read_text())
+            return self._json({"ok": True, "profile": dst_name})
 
         if seg == ["page"] and method == "POST":
             d.request_page(str(self._read_body().get("page", "next")))

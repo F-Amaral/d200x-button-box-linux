@@ -39,7 +39,9 @@ const GAME_BASE = { mode: "solid", shape: "circle", fill: "#2a3140", border: "#4
 const S = {
   name: null, profile: null, page: 0, sel: null, listening: false,
   profiles: [], profileGames: {}, settings: null, es: null, dirty: false, saveT: null,
+  showcase: false,   // whole app is running the isolated sandbox config tree
 };
+const showcaseOn = () => S.showcase;
 // the game a profile is for: its name (or "<game>-N") matching a known game.
 // Drives the in-editor "bind this button in <game>" tool (writers only).
 function profileGame() {
@@ -145,37 +147,77 @@ function registerOf(b) {
 
 // ---- load / save --------------------------------------------------
 async function boot() {
-  const st = await api("state"); setConn(true); setDeck(st.device.connected);
-  const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active; S.profileGames = pl.games || {};
-  S.settings = await api("settings");
-  applyOrientation();
   GAMES = await api("games").catch(() => ({}));
   GLYPHS = await api("glyphs").catch(() => GLYPHS);
-  ACTION_ICONS = await api("action-icons").catch(() => ({}));
   COMPOSED_NAMES = new Set(GLYPHS.composed || []);
   TELLTALE_SET = new Set(GLYPHS.telltales || []);
-  await loadProfile(S.name);
+  await reloadData();
   connectSSE();
   maybeIntro();
 }
+// re-pull everything that differs between the real config and the sandbox
+async function reloadData() {
+  const st = await api("state"); setConn(true); setDeck(st.device.connected);
+  S.showcase = !!st.showcase;
+  const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active; S.profileGames = pl.games || {};
+  S.settings = await api("settings");
+  ACTION_ICONS = await api("action-icons").catch(() => ACTION_ICONS);
+  applyOrientation();
+  await loadProfile(S.name);
+  updateShowcase();
+}
+// -- showcase sandbox: the whole app runs an isolated <config>/showcase/ tree --
+function updateShowcase() {
+  const on = showcaseOn();
+  $("#showcaseBar").hidden = !on;
+  const b = $("#showcaseBtn");
+  b.classList.toggle("on", on);
+  b.textContent = on ? "Exit sandbox" : "Showcase";
+}
+async function setShowcase(on, reset) {
+  await api("showcase", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ on, reset: !!reset }) });
+  // the daemon's `showcase` SSE event triggers the full reloadData()
+}
+
+function markSeen() { try { localStorage.setItem("d200x_intro", "1"); } catch (e) {} }
 function maybeIntro() {
   let seen;
   try { seen = localStorage.getItem("d200x_intro"); } catch (e) { seen = "1"; }
   if (seen) return;
+  const fresh = S.name === "example";   // untouched first run -> offer the choice
+  const acts = [];
+  if (fresh) {
+    acts.push(
+      Object.assign(el("button", { class: "primary", textContent: "Explore the example" }), {
+        onclick: () => { markSeen(); ov.remove(); },
+      }),
+      Object.assign(el("button", { class: "ghost", textContent: "Start from scratch" }), {
+        onclick: async () => {
+          markSeen(); ov.remove();
+          S.settings.active_profile = "default";
+          await saveSettings();
+          await api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: "default" }) });
+          await refreshProfiles(); await loadProfile("default"); renderChrome();
+        },
+      }),
+    );
+  } else {
+    acts.push(Object.assign(el("button", { class: "primary", textContent: "Got it" }), {
+      onclick: () => { markSeen(); ov.remove(); },
+    }));
+  }
+  acts.push(Object.assign(el("button", { class: "ghost", textContent: "Import from a game…" }), {
+    onclick: () => { markSeen(); ov.remove(); openDrawer("import"); },
+  }));
   const card = el("div", { class: "introcard" }, [
     el("h2", { textContent: "This is your deck" }),
-    el("p", { textContent: "13 LCD keys, 2 round aux buttons, 3 encoders. Click a control to bind it — or read your bindings straight from a game." }),
-    el("div", { class: "introacts" }, [
-      Object.assign(el("button", { class: "primary", textContent: "Got it" }), {
-        onclick: () => { try { localStorage.setItem("d200x_intro", "1"); } catch (e) {} ov.remove(); },
-      }),
-      Object.assign(el("button", { class: "ghost", textContent: "Import from a game…" }), {
-        onclick: () => { try { localStorage.setItem("d200x_intro", "1"); } catch (e) {} ov.remove(); openDrawer("import"); },
-      }),
-    ]),
+    el("p", { textContent: fresh
+      ? "It's loaded with an example layout — headlights, wipers, TC, ABS, encoders — where every key is already a bindable gamepad button. Keep it and edit to taste, or start from a clean map. The Showcase button opens a throwaway sandbox with these defaults whenever you want to experiment."
+      : "13 LCD keys, 2 round aux buttons, 3 encoders. Click a control to bind it — or read your bindings straight from a game." }),
+    el("div", { class: "introacts" }, acts),
   ]);
   const ov = el("div", { class: "introov" }, [card]);
-  ov.onclick = e => { if (e.target === ov) { try { localStorage.setItem("d200x_intro", "1"); } catch (e2) {} ov.remove(); } };
+  ov.onclick = e => { if (e.target === ov) { markSeen(); ov.remove(); } };
   document.body.append(ov);
 }
 async function loadProfile(name) {
@@ -247,6 +289,7 @@ function connectSSE() {
     if (m.type === "state") { setConn(true); setDeck(m.device.connected); }
     if (m.type === "device") setDeck(m.connected);
     if (m.type === "input") onInput(m);
+    if (m.type === "showcase") { toast(m.on ? "Showcase sandbox — your config is untouched" : "Back to your config"); reloadData(); }
     if (m.type === "profile" && m.name !== S.name && !S.dirty) { S.name = m.name; syncProfileSel(); loadProfile(m.name); }
   };
   S.es.onerror = () => setConn(false);
@@ -1285,6 +1328,8 @@ function buildProfiles(body) {
     "<b>Pages</b> are layers inside a profile; the round aux buttons flip between them." }));
 
   const list = el("section", {}, [el("h4", { textContent: "Profiles" })]);
+  if (showcaseOn())
+    list.append(el("p", { class: "hint", textContent: "Showcase sandbox — these profiles live in a separate config tree; edits here don't touch your real setup." }));
   for (const n of S.profiles) {
     const row = el("div", { class: "prow" }, [nameField(n, "pname")]);
     if (n === S.name) row.append(el("span", { class: "ptag active", textContent: "active" }));
@@ -1328,7 +1373,7 @@ function renderRail() {
   const rail = $("#rail");
   if (!RAIL_MQ.matches) { rail.hidden = true; return; }
   rail.hidden = false; rail.innerHTML = "";
-  rail.append(el("h4", { class: "railhead", textContent: "Profiles" }));
+  rail.append(el("h4", { class: "railhead", textContent: showcaseOn() ? "Profiles · sandbox" : "Profiles" }));
   for (const n of S.profiles) {
     const row = el("div", { class: "railrow" + (n === S.name ? " on" : "") });
     if (n === S.name) row.append(nameField(n));
@@ -1397,6 +1442,7 @@ function buildSettings(body) {
   const hb = el("input", { type: "number", step: "0.5", min: "0.5", value: s.device.heartbeat_seconds });
   const grab = el("input", { type: "checkbox", checked: s.device.grab_keyboard });
   const sleep = el("input", { type: "number", step: "10", min: "0", value: s.device.idle_sleep_seconds ?? 60, style: "width:6rem" });
+  const wakeUi = el("input", { type: "checkbox", checked: s.device.wake_on_ui ?? true });
   const orient = el("select");
   [[0, "Normal"], [180, "Upside down (180°)"]].forEach(([v, t]) =>
     orient.append(el("option", { value: v, textContent: t, selected: (s.device.orientation || 0) === v })));
@@ -1410,6 +1456,7 @@ function buildSettings(body) {
     fld("Heartbeat", hb, "write interval (s) that keeps the deck awake — don't set to 0"),
     fld("Grab keyboard", grab, "swallow the deck's built-in keyboard macros"),
     fld("Sleep after", sleep, "darks the screens after this many idle seconds; any key wakes it (0 = never)"),
+    fld("Wake on UI edits", wakeUi, "a change from this web UI (bind, profile, settings) also wakes the deck so you see it live"),
     fld("Mounting", orient, "how the deck sits in your rig — icons, key order, aux/encoders and navigation all follow. The status strip stays physically bottom-right (firmware); its clock text can't flip.")));
   body.append(section("Switching",
     el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to this profile from anywhere, then returns to auto-detect after the idle timeout." }),
@@ -1453,6 +1500,7 @@ function buildSettings(body) {
     s.device.heartbeat_seconds = Number(hb.value);
     s.device.grab_keyboard = grab.checked;
     s.device.idle_sleep_seconds = Math.max(0, Number(sleep.value) || 0);
+    s.device.wake_on_ui = wakeUi.checked;
     s.device.orientation = Number(orient.value);
     s.home.profile = homeProf.value;
     s.home.revert_seconds = Number(revert.value);
@@ -1787,6 +1835,11 @@ $("#listenBtn").onclick = () => {
 $("#profileSel").onchange = async e => {
   await api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: e.target.value }) });
   await loadProfile(e.target.value);
+};
+$("#showcaseBtn").onclick = () => setShowcase(!showcaseOn());
+$("#showcaseExit").onclick = () => setShowcase(false);
+$("#showcaseDiscard").onclick = () => {
+  if (confirm("Delete the showcase sandbox and everything in it?")) setShowcase(false, true);
 };
 
 // deck order for arrow-key navigation (follows the on-screen layout)
