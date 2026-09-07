@@ -67,6 +67,10 @@ def action_glyph(binding: dict) -> str | None:
         return {"home": "home", "auto": "refresh", "next": "swap", "prev": "swap"}.get(v, "profile")
     if "command" in binding:
         return "terminal"
+    if "media" in binding:
+        return {"volume_up": "volume", "volume_down": "volume", "mute": "volume",
+                "playpause": "media_play", "next": "media_next",
+                "previous": "media_prev", "stop": "media_pause"}.get(str(binding["media"]), "volume")
     return None
 
 

@@ -232,9 +232,10 @@ def is_nav_binding(binding: dict) -> bool:
 
 
 def is_box_binding(binding: dict) -> bool:
-    """A 'box control' — nav / page / profile / shell command / raw keystroke.
+    """A 'box control' — nav / page / profile / shell command / keystroke / media.
     Gets the neutral (nav) icon baseline; gamepad + empty keys are 'sim'."""
-    return is_nav_binding(binding) or "command" in binding or "key" in binding
+    return (is_nav_binding(binding) or "command" in binding or "key" in binding
+            or "media" in binding)
 
 
 def resolve_key_icon(binding: dict, page_style: dict | None,

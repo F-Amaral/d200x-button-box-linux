@@ -218,6 +218,9 @@ class Daemon:
                 binding["command"], shell=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
+        elif "media" in binding and trigger:
+            from . import media
+            media.fire(str(binding["media"]), binding.get("step", 5))
         elif "profile" in binding and trigger:
             # defer: switching reloads self.profile, don't do it mid-dispatch
             self._queued_profile = str(binding["profile"])

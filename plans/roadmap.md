@@ -459,8 +459,18 @@ blank (proven in `companion-surface-d200`). No hardware RE.
   hand-written legacy config working but nothing writes it. `device.heartbeat`
   modes 0/1 + `build_small_window` are now legacy-only.
 
+### Media / volume — DONE
+- `media.py` — shells to `wpctl` (or `pactl`) for default-sink volume/mute and
+  `playerctl` for MPRIS transport + now-playing. No dep; each part no-ops if its
+  tool is missing. Volume via PipeWire/D-Bus ignores window focus, so it works
+  under gamescope / VR where media keys don't.
+- `{media: volume_up|volume_down|mute|playpause|next|previous|stop}` binding
+  (optional `step:` percent). Editor action "media / volume"; auto-glyph
+  (`volume` / `media_*` tell-tales); classed as a box control.
+- `widget: media` — track / artist / `playing`+volume%. `media.status()` is
+  cached ~1.5 s so render / layout-push calls are cheap.
+
 ### Widgets — still open
-- `mpris` provider — now playing (dbus).
 - `sim` telemetry providers (LMU / AC / ACC) — the hard one; under Proton the
   shared memory is in the Wine prefix, likely need the game's UDP/REST telemetry
   instead. Start with LMU.

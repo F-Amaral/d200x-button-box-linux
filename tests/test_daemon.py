@@ -109,6 +109,20 @@ def test_knob_click_pulses_and_ignores_release():
     assert pad.events == [("press", 20)]
 
 
+def test_media_binding_dispatches(monkeypatch):
+    from d200x_button_box import media
+    fired = []
+    monkeypatch.setattr(media, "fire", lambda a, step=5: fired.append((a, step)))
+    d, _ = _daemon(knobs={17: {"left": {"media": "volume_down", "step": 2},
+                               "right": {"media": "volume_up"},
+                               "press": {"media": "mute"}}})
+    d._on_event(InputEvent(17, "knob", "left", b""))
+    d._on_event(InputEvent(17, "knob", "right", b""))
+    d._on_event(InputEvent(17, "knob", "press", b""))
+    d._on_event(InputEvent(17, "knob", "release", b""))   # click-release ignored
+    assert fired == [("volume_down", 2), ("volume_up", 5), ("mute", 5)]
+
+
 def test_out_of_range_button_does_not_crash():
     d, pad = _daemon(keys={0: {"gamepad": 999}})
 

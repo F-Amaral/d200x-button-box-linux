@@ -199,6 +199,7 @@ Each key or knob-event binding has exactly one action:
 | `{gamepad: N, momentary: true}` | a short `pulse_ms` press instead of a hold |
 | `{key: "F8"}` | send a keystroke (via `ydotool` / `xdotool`) |
 | `{command: "sh -c ..."}` | run a shell command |
+| `{media: volume_up}` | volume / media — `volume_up`, `volume_down`, `mute`, `playpause`, `next`, `previous`, `stop`. Volume takes an optional `step:` (percent, default 5). |
 | `{profile: "lmu"}` | switch profile — also `home`, `auto`, `next`, `prev` |
 | `{page: next}` | switch page — also `prev` or a page number |
 
@@ -241,6 +242,10 @@ knobs:
     left:  {gamepad: 17}
     right: {gamepad: 18}
     press: {gamepad: 19}
+  18:                              # a volume knob (works in VR — no window focus needed)
+    left:  {media: volume_down}
+    right: {media: volume_up}
+    press: {media: mute}
 ```
 
 Encoder turns fire one `pulse_ms` pulse per detent. The firmware only reports an
@@ -253,7 +258,7 @@ A `widget:` on any key — the wide status strip included — is drawn by the da
 and refreshed in place, so it rotates with `device.orientation` like any icon.
 It overrides the key's normal look; a `gamepad:`/`command:` on the same key
 still works when pressed. Same picker for every key: **Clock / System load /
-Shell output / Deck status**, or none (the key keeps its icon).
+Shell output / Deck status / Now playing**, or none (the key keeps its icon).
 
 ```yaml
 keys:
@@ -269,6 +274,7 @@ keys:
 | `sysload` | CPU / RAM bars (red ≥ 90 %) | 2 s |
 | `shell` | first stdout line of `cmd` + `unit` | `interval` seconds (default 5) |
 | `deck` | 3 lines — detected game (or `— no game —`) · switching mode (`auto` / `auto off` / `manual: <profile>` / `showcase`) · sleep (`sleeps Ns` counting down / `awake · game` / `no auto-sleep` / `asleep`) | 1 s |
+| `media` | 3 lines — track title · artist / player · `playing`/`paused` + volume % | 2 s |
 
 Set `icon_style` for colours/font. Legacy configs that used the firmware
 clock/load overlay on the status strip (`status: clock` / `status: load` /

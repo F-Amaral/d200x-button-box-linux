@@ -19,16 +19,19 @@ function applyOrientation() {
     STRIP_BELOW = true;
   }
 }
-const ACTIONS = ["none", "gamepad", "nav", "key", "command", "profile", "page"];
-const ACTION_LABEL = { nav: "navigate" };
+const ACTIONS = ["none", "gamepad", "nav", "media", "key", "command", "profile", "page"];
+const ACTION_LABEL = { nav: "navigate", media: "media / volume" };
 const ACTION_HINT = {
   gamepad: "virtual joystick button the game binds",
   nav: "jump home or flip pages — like the aux buttons, but on a screen key",
+  media: "system volume / media transport (wpctl + playerctl) — works in VR, no window focus needed",
   key: "keystroke (ydotool/xdotool)",
   command: "shell command on the daemon host",
   profile: "switch profile — or auto / next / prev / home",
   page: "switch page in this profile",
 };
+const MEDIA_FNS = [["volume_up", "Volume up"], ["volume_down", "Volume down"], ["mute", "Mute toggle"],
+  ["playpause", "Play / pause"], ["next", "Next track"], ["previous", "Previous track"], ["stop", "Stop"]];
 const NAV_FNS = [["home", "Home"], ["prev_page", "Previous page"], ["next_page", "Next page"]];
 const gameLabel = k => GAMES[k]?.label || k.toUpperCase();
 const NAV_FN_LABEL = Object.fromEntries(NAV_FNS);
@@ -142,7 +145,7 @@ function isNav(b) { return b.role === "nav" || "page" in b || "profile" in b || 
 // sim = a car input (gamepad, or a still-empty key); box = nav / util / macro
 function registerOf(b) {
   if (isNav(b)) return "box";
-  if ("command" in b || "key" in b) return "box";
+  if ("command" in b || "key" in b || "media" in b) return "box";
   return "sim";
 }
 
@@ -490,6 +493,7 @@ function derivedGlyph(b) {
   if ("page" in b) { const v = String(b.page).toLowerCase(); return v === "prev" || v === "previous" ? "chevron_left" : v === "next" ? "chevron_right" : "layers"; }
   if ("profile" in b) { const v = String(b.profile).toLowerCase(); return { home: "home", auto: "refresh", next: "swap", prev: "swap" }[v] || "swap"; }
   if ("command" in b) return "terminal";
+  if ("media" in b) return { playpause: "media_play", next: "media_next", previous: "media_prev", stop: "media_pause" }[b.media] || "volume";
   return "";
 }
 function iconCaption(b) {
@@ -699,10 +703,12 @@ function actionBlock(binding, onChange, defBtn = 1) {
     }
     let input;
     if (a === "nav") { input = el("select"); NAV_FNS.forEach(([v, t]) => input.append(el("option", { value: v, textContent: t, selected: v === (binding.nav || "home") }))); }
+    else if (a === "media") { input = el("select"); MEDIA_FNS.forEach(([v, t]) => input.append(el("option", { value: v, textContent: t, selected: v === (binding.media || "volume_up") }))); }
     else if (a === "profile") { input = el("select"); [...S.profiles, "auto", "next", "prev", "home"].forEach(o => input.append(el("option", { value: o, textContent: o, selected: o === binding.profile }))); }
     else if (a === "page") { input = el("select"); ["next", "prev", "0", "1", "2", "3", "4"].forEach(o => input.append(el("option", { value: o, textContent: o, selected: String(binding.page) === o }))); }
     else input = el("input", { type: "text", value: binding[a] || "", placeholder: a === "key" ? "F13" : "e.g. sh -c 'crew-chief …'" });
     if (a === "nav" && !binding.nav) binding.nav = input.value;   // seed the default
+    if (a === "media" && !binding.media) binding.media = input.value;
     input.oninput = input.onchange = () => { setAct(binding, a, input.value); onChange(); };
     valFld.append(el("label", { textContent: "value" }), input);
     if (ACTION_HINT[a]) valFld.append(el("div", { class: "hint", textContent: ACTION_HINT[a] }));
@@ -781,7 +787,7 @@ function widgetFields(kb) {
   const g = el("div", { class: "grp" }, [el("h3", { textContent: "Widget" })]);
   const sel = el("select");
   [["", "— none —"], ["clock", "Clock"], ["sysload", "System load"], ["shell", "Shell output"],
-   ["deck", "Deck status"]]
+   ["deck", "Deck status"], ["media", "Now playing / volume"]]
     .forEach(([v, t]) => sel.append(el("option", { value: v, textContent: t, selected: v === (kb.widget || "") })));
   sel.onchange = () => {
     if (sel.value) { kb.widget = sel.value; delete kb.glyph; delete kb.icon_text; delete kb.icon; }
@@ -1112,7 +1118,7 @@ function renderEditor() {
 
     if (index === STATUS) {
       const sel = el("select");
-      [["off", "Custom icon"], ["clock", "Clock"], ["sysload", "System load"], ["deck", "Deck status"]]
+      [["off", "Custom icon"], ["clock", "Clock"], ["sysload", "System load"], ["deck", "Deck status"], ["media", "Now playing / volume"]]
         .forEach(([v, t]) => sel.append(el("option", { value: v, textContent: t, selected: v === (kb.widget || "off") })));
       sel.onchange = () => {
         delete kb.clock; delete kb.status; delete kb.widget; delete kb.cmd; delete kb.unit; delete kb.interval;

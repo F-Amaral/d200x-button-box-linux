@@ -21,7 +21,7 @@ from __future__ import annotations
 import subprocess
 import time
 
-KINDS = ("clock", "sysload", "shell", "deck")
+KINDS = ("clock", "sysload", "shell", "deck", "media")
 
 # daemon runtime state for `widget: deck`, refreshed each tick by Daemon._tick_widgets
 STATE: dict = {}
@@ -45,6 +45,8 @@ def interval(binding: dict) -> float:
         return max(1.0, float(binding.get("interval", 5)))
     if kind == "deck":
         return 1.0          # the sleep countdown ticks per second
+    if kind == "media":
+        return 2.0
     return 5.0
 
 
@@ -101,7 +103,23 @@ def render(binding: dict, size: tuple[int, int] | None, style: dict) -> bytes | 
     if kind == "deck":
         return _lines_tile(_deck_lines(STATE), style, size)
 
+    if kind == "media":
+        from . import media
+        return _lines_tile(_media_lines(media.status()), style, size)
+
     return None
+
+
+def _media_lines(st: dict) -> list[str]:
+    """3 lines: track / artist-or-player / transport + volume."""
+    title = (st.get("title") or "").strip()
+    artist = (st.get("artist") or "").strip() or (st.get("player") or "").strip()
+    vol, muted, playing = st.get("volume"), st.get("muted"), st.get("playing")
+    v = "muted" if muted else ("—" if vol is None else f"vol {vol}%")
+    state = {True: "playing", False: "paused"}.get(playing, "")
+    return [title or "— nothing playing —",
+            artist or "system audio",
+            f"{state} · {v}".strip(" ·") if state else v]
 
 
 def _deck_lines(st: dict) -> list[str]:

@@ -43,6 +43,16 @@ def test_render_deck_status():
     assert widgets._deck_lines({}) == ["— no game —", "auto off", "—"]   # empty STATE is safe
 
 
+def test_render_media(monkeypatch):
+    from d200x_button_box import media
+    monkeypatch.setattr(media, "status", lambda: {
+        "title": "Track", "artist": "Artist", "player": "mpv",
+        "playing": True, "volume": 72, "muted": False})
+    png = widgets.render({"widget": "media"}, (196, 196), dict(layout.DEFAULT_NAV_STYLE))
+    assert png and Image.open(io.BytesIO(png)).size == (196, 196)
+    assert widgets._media_lines(media.status()) == ["Track", "Artist", "playing · vol 72%"]
+
+
 def _cells(payload):
     z = zipfile.ZipFile(io.BytesIO(payload))
     return set(json.loads(z.read("manifest.json")))
