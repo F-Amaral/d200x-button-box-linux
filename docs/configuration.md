@@ -287,10 +287,18 @@ black. Resolution order:
 Per-key fields:
 
 - `label: "PIT"` — text on the key
-- `icon: /path/to.png` — an uploaded image
+- `icon: a1b2c3d4….png` — an uploaded image (stored as a bare filename under
+  `icons/`; an absolute path also works and is rewritten to the filename on load)
 - `icon_text: "PIT"` — override the auto initials
 - `glyph: turn` — draw a named symbol instead of initials (below)
 - `icon_style: {...}` — per-key style overrides
+
+### Sharing a profile
+
+A profile is just `profiles/<name>.yaml` — copy it to another config dir or send
+it to someone. If any key uses an uploaded `icon:`, copy the matching
+`icons/*.png` files alongside it; everything else (glyphs, labels, colours) is
+self-contained in the YAML.
 
 ### Style
 

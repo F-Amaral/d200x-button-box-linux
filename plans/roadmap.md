@@ -478,9 +478,6 @@ blank (proven in `companion-surface-d200`). No hardware RE.
 - **AC EVO — run the name-discovery pass** — `tools/acevo-probe.py` batch-binds
   the ~56 unnamed control ids; open AC EVO, note the names, `--names notes.txt`,
   send them to bake into `_CONTROL_IDS`. (Tooling done; the session hasn't run.)
-- Per-key press feedback (flash the key on the deck) — cheap now via `0x000d`
-- Profile export / import (share a setup as a file)
-- "Test" button in the editor — pulse a gamepad button to check it fires
 - `d200x-button-box` CLI subcommands that hit the API (activate / page / state)
 - Install script + README pass (no AUR needed)
 - **Example setups per sim** — ship ready-made profiles for LMU, AC, AC EVO,

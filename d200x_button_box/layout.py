@@ -202,8 +202,16 @@ STATUS_W, STATUS_H = 458, 196
 def _load_icon_png(path: str, size: tuple[int, int] | None = None) -> bytes | None:
     Image = _pil()[0]
     dims = size or (ICON_SIZE, ICON_SIZE)
+    # `icon:` is normally a bare upload filename -> resolve under the icons dir;
+    # fall back to treating it as a literal path (legacy absolute refs, or a
+    # hand-written path to an image elsewhere on disk).
+    from pathlib import Path
+
+    from .config import upload_icons_dir
+    p = upload_icons_dir() / Path(path).name
+    src = str(p) if p.is_file() else path
     try:
-        with Image.open(path) as img:
+        with Image.open(src) as img:
             img = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
             if img.size != dims:
                 img = img.resize(dims, Image.Resampling.LANCZOS)

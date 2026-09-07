@@ -100,7 +100,9 @@ def _save_icon(data: bytes) -> dict:
     dest = config.upload_icons_dir() / name
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(png)
-    return {"path": str(dest), "url": f"/api/icons/{name}"}
+    # store the bare filename, not an absolute path -- a profile stays portable
+    # (share the yaml + these PNGs; works in the sandbox / another machine too)
+    return {"path": name, "url": f"/api/icons/{name}"}
 
 
 class Handler(BaseHTTPRequestHandler):

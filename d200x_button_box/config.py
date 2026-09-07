@@ -12,6 +12,7 @@ plus optional ``label`` and ``icon`` (path to an image) for the LCD key.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -287,6 +288,9 @@ def list_profiles() -> list[str]:
     return sorted(p.stem for p in PROFILES_DIR.glob("*.yaml"))
 
 
+_UPLOAD_ICON_RE = re.compile(r"^[0-9a-f]{16}\.png$")
+
+
 def _migrate_status_key(b: dict) -> dict:
     """Legacy wide-strip firmware modes -> the equivalent rendered widget."""
     if not isinstance(b, dict) or b.get("widget"):
@@ -300,11 +304,19 @@ def _migrate_status_key(b: dict) -> dict:
     return b
 
 
+def _portable_icon(b: dict) -> dict:
+    """Store an uploaded `icon:` as its bare filename so the profile travels."""
+    ic = b.get("icon") if isinstance(b, dict) else None
+    if isinstance(ic, str) and "/" in ic and _UPLOAD_ICON_RE.match(Path(ic).name):
+        b["icon"] = Path(ic).name
+    return b
+
+
 def _page_from_dict(raw: dict) -> Page:
     page = Page(name=raw.get("name", ""), style=dict(raw.get("style") or {}))
     for k, v in (raw.get("keys") or {}).items():
         ki = int(k)
-        b = v or {}
+        b = _portable_icon(v or {})
         page.keys[ki] = _migrate_status_key(b) if ki == protocol.STATUS_KEY_INDEX else b
     for k, v in (raw.get("knobs") or {}).items():
         page.knobs[int(k)] = v or {}

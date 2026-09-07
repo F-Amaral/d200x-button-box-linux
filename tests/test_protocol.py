@@ -103,6 +103,27 @@ def test_set_buttons_embeds_uploaded_icon(tmp_path):
             assert img.size == (196, 196)
 
 
+def test_uploaded_icon_ref_is_portable(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from d200x_button_box import config, layout
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+    icons = tmp_path / "icons"; icons.mkdir()
+    name = "a1b2c3d4e5f60718.png"
+    Image.new("RGBA", (196, 196), "blue").save(icons / name)
+
+    # a bare filename resolves under the icons dir
+    assert layout._load_icon_png(name) is not None
+
+    # an absolute path from another machine -> rewritten to the bare name on load,
+    # then still resolves here because the PNG exists locally
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path / "profiles")
+    config.write_profile_dict("p", {"keys": {"0": {"gamepad": 1, "icon": f"/somewhere/else/{name}"}}})
+    b = config.load_profile("p").page(0).keys[0]
+    assert b["icon"] == name
+    assert layout._load_icon_png(b["icon"]) is not None
+
+
 def test_render_icon_glyph_and_text():
     import io as _io
 
