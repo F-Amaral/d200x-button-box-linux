@@ -323,13 +323,12 @@ def _cell_icon(page, index, game_base, nav_base) -> bytes | None:
     """One cell's icon before rotation. Handles the wide status slot's modes."""
     binding = page.keys.get(index, {}) if page is not None else {}
     if index == protocol.STATUS_KEY_INDEX:
-        from . import widgets
-        smode = binding.get("status") or ("load" if binding.get("clock") is False else "clock")
-        # clock / load -> the firmware fills the strip; off / widget -> our own wide icon
-        if smode == "off" or widgets.is_widget(binding):
-            return resolve_key_icon(binding, page.style, game_base, nav_base,
-                                    size=(STATUS_W, STATUS_H))
-        return None
+        # legacy firmware clock / load fills the strip itself; otherwise (a
+        # widget, a custom icon, or nothing) we render the wide cell
+        if binding.get("status") in ("clock", "load") or binding.get("clock") is False:
+            return None
+        return resolve_key_icon(binding, page.style, game_base, nav_base,
+                                size=(STATUS_W, STATUS_H))
     return resolve_key_icon(binding, page.style, game_base, nav_base)
 
 

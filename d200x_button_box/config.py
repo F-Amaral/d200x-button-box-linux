@@ -113,6 +113,9 @@ def default_icon_cfg() -> dict:
     return {"game": dict(layout.DEFAULT_GAME_STYLE), "nav": dict(layout.DEFAULT_NAV_STYLE)}
 
 
+_OVERRIDE_EXPIRY = ("sticky", "game_close", "timed")
+
+
 @dataclass
 class Settings:
     brightness: int | None = 80
@@ -126,6 +129,8 @@ class Settings:
     pulse_ms: int = 60
     hold_ms: int = 500               # tap vs press-and-hold threshold
     active_profile: str = "default"
+    override_expiry: str = "sticky"   # how a manual profile override ends:
+    override_seconds: int = 900       #   sticky | game_close | timed (uses this)
     auto_detect: dict[str, list[str]] = field(default_factory=dict)
     games: dict[str, str] = field(default_factory=dict)  # game -> install path (for label import)
     icon: dict = field(default_factory=default_icon_cfg)  # {game: style, nav: style}
@@ -151,6 +156,7 @@ class Settings:
         pad = raw.get("gamepad", {}) or {}
         api = raw.get("api", {}) or {}
         home = raw.get("home", {}) or {}
+        ov = raw.get("override", {}) or {}
         nav = raw.get("nav", {}) or {}
         icon = raw.get("icon") or {}
         base_icon = default_icon_cfg()
@@ -170,6 +176,9 @@ class Settings:
             pulse_ms=int(raw.get("pulse_ms", cls.pulse_ms)),
             hold_ms=int(raw.get("hold_ms", cls.hold_ms)),
             active_profile=raw.get("active_profile", cls.active_profile),
+            override_expiry=(ov.get("expiry") if ov.get("expiry") in _OVERRIDE_EXPIRY
+                             else cls.override_expiry),
+            override_seconds=max(30, int(ov.get("seconds", cls.override_seconds))),
             auto_detect=auto,
             games={k: str(v) for k, v in (raw.get("games") or {}).items()},
             icon=merged_icon,
@@ -199,6 +208,7 @@ class Settings:
             "pulse_ms": self.pulse_ms,
             "hold_ms": self.hold_ms,
             "active_profile": self.active_profile,
+            "override": {"expiry": self.override_expiry, "seconds": self.override_seconds},
             "auto_detect": self.auto_detect,
             "games": self.games,
             "icon": self.icon,
@@ -277,10 +287,25 @@ def list_profiles() -> list[str]:
     return sorted(p.stem for p in PROFILES_DIR.glob("*.yaml"))
 
 
+def _migrate_status_key(b: dict) -> dict:
+    """Legacy wide-strip firmware modes -> the equivalent rendered widget."""
+    if not isinstance(b, dict) or b.get("widget"):
+        return b
+    if b.get("status") == "load" or b.get("clock") is False:
+        b.pop("status", None); b.pop("clock", None)
+        b["widget"] = "sysload"
+    elif b.get("status") == "clock":
+        b.pop("status", None)
+        b["widget"] = "clock"
+    return b
+
+
 def _page_from_dict(raw: dict) -> Page:
     page = Page(name=raw.get("name", ""), style=dict(raw.get("style") or {}))
     for k, v in (raw.get("keys") or {}).items():
-        page.keys[int(k)] = v or {}
+        ki = int(k)
+        b = v or {}
+        page.keys[ki] = _migrate_status_key(b) if ki == protocol.STATUS_KEY_INDEX else b
     for k, v in (raw.get("knobs") or {}).items():
         page.knobs[int(k)] = v or {}
     return page

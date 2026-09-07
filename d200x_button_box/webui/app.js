@@ -40,6 +40,7 @@ const S = {
   name: null, profile: null, page: 0, sel: null, listening: false,
   profiles: [], profileGames: {}, settings: null, es: null, dirty: false, saveT: null,
   showcase: false,   // whole app is running the isolated sandbox config tree
+  forced: null,      // a manual profile override is active (snapshot.profile.forced)
 };
 const showcaseOn = () => S.showcase;
 // the game a profile is for: its name (or "<game>-N") matching a known game.
@@ -159,12 +160,18 @@ async function boot() {
 async function reloadData() {
   const st = await api("state"); setConn(true); setDeck(st.device.connected);
   S.showcase = !!st.showcase;
+  S.forced = st.profile.forced || null;
   const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active; S.profileGames = pl.games || {};
   S.settings = await api("settings");
   ACTION_ICONS = await api("action-icons").catch(() => ACTION_ICONS);
   applyOrientation();
   await loadProfile(S.name);
   updateShowcase();
+  updateOverride();
+}
+function updateOverride() {
+  $("#overrideBar").hidden = !S.forced;
+  if (S.forced) $("#overrideName").textContent = S.forced;
 }
 // -- showcase sandbox: the whole app runs an isolated <config>/showcase/ tree --
 function updateShowcase() {
@@ -290,7 +297,10 @@ function connectSSE() {
     if (m.type === "device") setDeck(m.connected);
     if (m.type === "input") onInput(m);
     if (m.type === "showcase") { toast(m.on ? "Showcase sandbox — your config is untouched" : "Back to your config"); reloadData(); }
-    if (m.type === "profile" && m.name !== S.name && !S.dirty) { S.name = m.name; syncProfileSel(); loadProfile(m.name); }
+    if (m.type === "profile") {
+      S.forced = m.forced || null; updateOverride();
+      if (m.name !== S.name && !S.dirty) { S.name = m.name; syncProfileSel(); loadProfile(m.name); }
+    }
   };
   S.es.onerror = () => setConn(false);
 }
@@ -438,7 +448,8 @@ function mergedStyle(b) {
 }
 function previewURL(b) {
   if (b.widget) {
-    const q = new URLSearchParams({ widget: b.widget, v: Math.floor(Date.now() / 30000) });
+    // fine time bucket so the live poll actually re-fetches a ticking widget
+    const q = new URLSearchParams({ widget: b.widget, v: Math.floor(Date.now() / 1500) });
     if (b.cmd) q.set("cmd", b.cmd);
     if (b.unit) q.set("unit", b.unit);
     const s = mergedStyle(b);
@@ -518,10 +529,7 @@ function cellFor(id, cls) {
   if (S.sel && S.sel.kind === "key" && S.sel.index === id) c.classList.add("sel");
   const navCfg = S.settings?.nav?.binds?.[id];
   if (navCfg?.tap === "home" || navCfg?.hold === "home") c.append(el("span", { class: "badge", textContent: "HOME" }));
-  const sMode = id === STATUS ? (b.status || (b.clock === false ? "load" : "clock")) : null;
-  if (id === STATUS && !b.widget && sMode !== "off") {
-    c.append(el("div", { class: "lbl", textContent: sMode === "load" ? "▤ system load" : "🕐 clock" }));
-  } else if (id === STATUS) {
+  if (id === STATUS) {
     let u = previewURL(b);
     if (u) { u += "&w=458&h=196"; const im = deckIcon(id, u); im.className = "statwide"; c.append(im); }
     else c.append(el("div", { class: "lbl", textContent: b.label || labelFor(id) }));
@@ -609,6 +617,32 @@ function renderDeck() {
   const grid = () => { for (const row of KEY_ROWS) for (const id of row) d.append(cellFor(id, id === STATUS ? "wide" : "")); };
   const strip = () => { for (const id of STRIP) d.append(stripCell(id)); };
   if (STRIP_BELOW) { grid(); strip(); } else { strip(); grid(); }
+  syncLiveWidgets();
+}
+
+// widget previews (clock / deck countdown / …) are rendered server-side; poll
+// them while any live widget is on the page so the deck view actually ticks
+let LIVE_TIMER = null;
+function syncLiveWidgets() {
+  if (LIVE_TIMER) { clearInterval(LIVE_TIMER); LIVE_TIMER = null; }
+  const live = Object.entries(curPage().keys || {}).filter(([, b]) => b && b.widget);
+  if (!live.length) return;
+  LIVE_TIMER = setInterval(() => {
+    if (document.querySelector(".cell.dragging")) return;
+    for (const [i] of live) {
+      const b = curPage().keys[i];
+      if (!b || !b.widget) continue;
+      let u = previewURL(b);
+      if (Number(i) === STATUS) u += "&w=458&h=196";
+      deckIcon(Number(i), u);
+    }
+    const mini = document.querySelector("#editor .lookmini");
+    const sk = S.sel && curPage().keys[S.sel.index];
+    if (mini && sk && sk.widget) {
+      const u = previewURL(sk);
+      const p = new Image(); p.onload = () => { mini.src = u; }; p.src = u;
+    }
+  }, 1500);
 }
 function selectControl(kind, index) {
   S.sel = { kind, index }; renderDeck(); renderEditor();
@@ -746,7 +780,8 @@ function frameKind(m, kb) {
 function widgetFields(kb) {
   const g = el("div", { class: "grp" }, [el("h3", { textContent: "Widget" })]);
   const sel = el("select");
-  [["", "— none —"], ["clock", "Clock (HH:MM)"], ["sysload", "CPU · RAM bars"], ["shell", "Shell output"]]
+  [["", "— none —"], ["clock", "Clock"], ["sysload", "System load"], ["shell", "Shell output"],
+   ["deck", "Deck status"]]
     .forEach(([v, t]) => sel.append(el("option", { value: v, textContent: t, selected: v === (kb.widget || "") })));
   sel.onchange = () => {
     if (sel.value) { kb.widget = sel.value; delete kb.glyph; delete kb.icon_text; delete kb.icon; }
@@ -1076,31 +1111,23 @@ function renderEditor() {
     }
 
     if (index === STATUS) {
-      const cur = kb.widget === "clock" ? "wclock" : kb.widget === "sysload" ? "wsysload"
-        : (kb.status === "load" || kb.clock === false) ? "load" : kb.status === "off" ? "off" : "clock";
       const sel = el("select");
-      [["clock", "Clock — firmware"], ["wclock", "Clock — rendered (upright, styleable)"],
-       ["load", "System load — firmware"], ["wsysload", "System load — rendered"],
-       ["off", "Custom icon"]].forEach(([v, t]) =>
-        sel.append(el("option", { value: v, textContent: t, selected: v === cur })));
+      [["off", "Custom icon"], ["clock", "Clock"], ["sysload", "System load"], ["deck", "Deck status"]]
+        .forEach(([v, t]) => sel.append(el("option", { value: v, textContent: t, selected: v === (kb.widget || "off") })));
       sel.onchange = () => {
-        delete kb.clock; delete kb.status; delete kb.widget;
-        if (sel.value === "wclock") kb.widget = "clock";
-        else if (sel.value === "wsysload") kb.widget = "sysload";
-        else if (sel.value !== "clock") kb.status = sel.value;
+        delete kb.clock; delete kb.status; delete kb.widget; delete kb.cmd; delete kb.unit; delete kb.interval;
+        if (sel.value === "off") kb.status = "off";
+        else { kb.widget = sel.value; delete kb.glyph; delete kb.icon_text; delete kb.icon; }
         renderEditor(); renderDeck(); touched();
       };
       const g = el("div", { class: "grp" }, [el("h3", { textContent: "Status strip" })]);
       g.append(el("div", { class: "fld" }, [el("label", { textContent: "shows" }), sel]));
-      g.append(el("div", { class: "hint", style: "grid-column:2", textContent:
-        cur === "wclock" || cur === "wsysload"
-          ? "We render this and refresh it in place — rotates with the mounting orientation, takes the look below."
-          : cur === "off"
-            ? "The firmware small window is set to BACKGROUND mode so this wide key shows the icon below."
-            : "The firmware fills this wide key with the clock / system readout (can't rotate)." }));
+      g.append(el("div", { class: "hint", style: "grid-column:2", textContent: kb.widget
+        ? "Rendered by the daemon, refreshed in place — rotates with the mounting orientation, takes the look below."
+        : "This wide key shows its own icon (set below)." }));
       e.append(g);
-      if (cur === "off") e.append(lookField(kb, index));
-      else if (cur === "wclock" || cur === "wsysload") e.append(widgetLook(kb));
+      if (kb.widget) e.append(widgetLook(kb));
+      else e.append(lookField(kb, index));
     } else {
       if (!kb.widget) { e.append(lookField(kb, index)); e.append(holdBlock(kb)); }
       e.append(widgetFields(kb));
@@ -1451,6 +1478,16 @@ function buildSettings(body) {
   S.profiles.forEach(n => homeProf.append(el("option", { value: n, textContent: n, selected: n === s.home.profile })));
   const revert = el("input", { type: "number", step: "1", min: "0", value: s.home.revert_seconds });
 
+  const ov = s.override || (s.override = { expiry: "sticky", seconds: 900 });
+  const ovMode = el("select");
+  [["sticky", "Until I resume auto-detect"], ["game_close", "Until the game closes"],
+   ["timed", "For a set time"]].forEach(([v, t]) =>
+    ovMode.append(el("option", { value: v, textContent: t, selected: ov.expiry === v })));
+  const ovSecs = el("input", { type: "number", step: "30", min: "30", value: ov.seconds ?? 900, style: "width:6rem" });
+  const ovSecsRow = fld("Override lasts", ovSecs, "seconds a manual override holds before auto-detect resumes");
+  const syncOvRow = () => ovSecsRow.hidden = ovMode.value !== "timed";
+  ovMode.onchange = syncOvRow; syncOvRow();
+
   body.append(section("Device",
     fld("Brightness", el("span", {}, [bri, " ", briV])),
     fld("Heartbeat", hb, "write interval (s) that keeps the deck awake — don't set to 0"),
@@ -1459,7 +1496,9 @@ function buildSettings(body) {
     fld("Wake on UI edits", wakeUi, "a change from this web UI (bind, profile, settings) also wakes the deck so you see it live"),
     fld("Mounting", orient, "how the deck sits in your rig — icons, key order, aux/encoders and navigation all follow. The status strip stays physically bottom-right (firmware); its clock text can't flip.")));
   body.append(section("Switching",
-    el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to this profile from anywhere, then returns to auto-detect after the idle timeout." }),
+    fld("Manual override", ovMode, "when you pick a profile by hand (or a binding does), how long before auto-detect takes over again"),
+    ovSecsRow,
+    el("p", { class: "hint", textContent: "The home button (set in the Navigation panel) jumps to the home profile from anywhere, then returns to auto-detect after its own idle timeout." }),
     fld("Home profile", homeProf),
     fld("Return after", revert, "idle seconds before going back to auto-detect (0 = stay)")));
 
@@ -1504,6 +1543,7 @@ function buildSettings(body) {
     s.device.orientation = Number(orient.value);
     s.home.profile = homeProf.value;
     s.home.revert_seconds = Number(revert.value);
+    s.override = { expiry: ovMode.value, seconds: Math.max(30, Number(ovSecs.value) || 900) };
     await saveSettings();
     applyOrientation();
     renderChrome(); renderDeck(); closeDrawer();
@@ -1841,6 +1881,8 @@ $("#showcaseExit").onclick = () => setShowcase(false);
 $("#showcaseDiscard").onclick = () => {
   if (confirm("Delete the showcase sandbox and everything in it?")) setShowcase(false, true);
 };
+$("#overrideClear").onclick = () =>
+  api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: "auto" }) });
 
 // deck order for arrow-key navigation (follows the on-screen layout)
 const deckOrder = () => STRIP_BELOW

@@ -425,12 +425,41 @@ blank (proven in `companion-surface-d200`). No hardware RE.
   fallback, so a bad hint can't blind it. Daemon + the bind-endpoint 409 check
   + `_sync_game_labels` all pass `settings.games`.
 
+### Auto-detect: stuck-on-a-closed-game + dark-deck-after-manual-switch (2026-09-07) — DONE
+- Playing A → B → C in a row, detection stuck on an earlier game: matching was
+  "needle anywhere in any cmdline", first game in dict order won, and Proton
+  leaves the closed game's paths in helper cmdlines (shader cache, wineserver,
+  Steam) for a long time. Now a needle counts only as a **path component next to
+  a launched `.exe`**, and when several games match the **youngest process
+  wins** — so close-A-open-B switches cleanly. `_procs()` adds `/proc/<pid>/stat`
+  start time.
+- Manually switching the profile (or Showcase, or a page) while the deck had
+  idle-slept pushed the new layout to a screen still at brightness 0. Added
+  `Daemon._nudge_awake()` (wake + reset the idle timer) to `set_profile` /
+  `set_page` / `_switch_config`; `_wake()` no longer assumes `self.dev`.
+- Stuck detection also defeated sleep forever (`game_running` resets the idle
+  timer every tick) — screens on all night. Root fix is the detection change
+  above: a closed game clears `detected`, so the idle countdown starts. Kept the
+  "game running = never sleep" behaviour on purpose (no cap).
+- New `settings.override.expiry` — `sticky` (default, old behaviour) /
+  `game_close` (drops when the game you were in exits) / `timed` (`.seconds`).
+  `Daemon._tick_override` runs on the detect poll; web UI gets a "Resume
+  auto-detect" bar whenever `snapshot.profile.forced` is set, and a
+  Settings → Switching control for the mode.
+- New `widget: deck` — a live cell showing the daemon's own state: detected
+  game, switching mode (auto / manual / showcase), sleep countdown. The daemon
+  keeps `widgets.STATE` fresh each tick; `render()` for this kind reads it (the
+  only non-pure provider). `/api/icon-preview?widget=deck` shows the real state.
+  Web UI polls widget previews (`syncLiveWidgets`) so the countdown actually
+  ticks. `_last_activity` now seeded at daemon start, not epoch.
+- **Firmware status widgets retired.** The wide strip is one more key: same
+  widget picker (Clock / System load / Shell / Deck), or a custom icon. Legacy
+  `status: clock` / `load` / `clock: false` migrate to the widget on load
+  (`config._migrate_status_key`); `_status_mode` / `_cell_icon` keep a
+  hand-written legacy config working but nothing writes it. `device.heartbeat`
+  modes 0/1 + `build_small_window` are now legacy-only.
+
 ### Widgets — still open
-- **Drop the firmware default widgets.** Now that `widget: clock` / `widget:
-  sysload` render our own (rotation-aware), retire `status: clock` / `status:
-  load` (firmware-drawn, can't rotate). Make `widget: clock` the default status.
-  Simplifies `daemon._status_mode`, `device.heartbeat` (→ just the keep-alive
-  ping), `protocol.build_small_window` (modes 0/1 unused), the status editor.
 - `mpris` provider — now playing (dbus).
 - `sim` telemetry providers (LMU / AC / ACC) — the hard one; under Proton the
   shared memory is in the Wine prefix, likely need the game's UDP/REST telemetry

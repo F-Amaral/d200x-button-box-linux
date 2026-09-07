@@ -66,7 +66,7 @@ def test_set_buttons_generates_icons_from_labels():
     page = config.Page(keys={
         0: {"gamepad": 1, "label": "TURN L"},
         5: {"gamepad": 6, "label": "Pit"},
-        protocol.STATUS_KEY_INDEX: {"label": "STATUS"},
+        protocol.STATUS_KEY_INDEX: {"status": "clock"},
     })
     payload = build_set_buttons(page)
     with zipfile.ZipFile(io.BytesIO(payload)) as z:
@@ -74,7 +74,7 @@ def test_set_buttons_generates_icons_from_labels():
         names = z.namelist()
     assert manifest["0_0"]["ViewParam"][0]["Icon"] in names   # generated icon
     assert "Text" not in manifest["0_0"]["ViewParam"][0]
-    assert "Icon" not in manifest["3_2"]["ViewParam"][0]       # status = clock only
+    assert "Icon" not in manifest["3_2"]["ViewParam"][0]       # legacy firmware clock -> no icon
     for i in range(protocol.PACKET_SIZE - 8, len(payload), protocol.PACKET_SIZE):
         assert payload[i] not in (0x00, 0x7C)
 
@@ -160,20 +160,21 @@ def test_status_strip_modes():
 
     cell = _cell(protocol.STATUS_KEY_INDEX)
 
-    # clock / load -> SmallViewMode 2, no icon (the firmware fills the strip)
-    for keys in ({"gamepad": 14}, {"status": "load", "label": "x"}):
+    # legacy firmware clock / load -> SmallViewMode 2, no icon (firmware fills it)
+    for keys in ({"status": "clock"}, {"status": "load", "label": "x"}, {"clock": False}):
         with zf(config.Page(keys={protocol.STATUS_KEY_INDEX: keys})) as z:
             m = json.loads(z.read("manifest.json"))
         assert m[cell]["SmallViewMode"] == 2
         assert "Icon" not in m[cell]["ViewParam"][0]
 
-    # off (custom icon) -> SmallViewMode 2 + a wide 458x196 icon on the 3_2 slot
-    with zf(config.Page(keys={protocol.STATUS_KEY_INDEX: {"status": "off", "label": "Radio"}})) as z:
-        m = json.loads(z.read("manifest.json"))
-        icon = m[cell]["ViewParam"][0]["Icon"]
-        assert m[cell]["SmallViewMode"] == 2 and icon
-        with Image.open(io.BytesIO(z.read(icon))) as im:
-            assert im.size == (STATUS_W, STATUS_H)
+    # everything else (widget / custom icon / a labelled key) -> a wide 458x196 icon
+    for keys in ({"status": "off", "label": "Radio"}, {"widget": "clock"}, {"label": "STATUS"}):
+        with zf(config.Page(keys={protocol.STATUS_KEY_INDEX: keys})) as z:
+            m = json.loads(z.read("manifest.json"))
+            icon = m[cell]["ViewParam"][0]["Icon"]
+            assert m[cell]["SmallViewMode"] == 2 and icon
+            with Image.open(io.BytesIO(z.read(icon))) as im:
+                assert im.size == (STATUS_W, STATUS_H)
 
     # heartbeat payloads: clock -> mode 1, load -> mode 0, off -> mode 2 (BACKGROUND)
     assert b"1|0|0|12:00:00|0" in protocol.build_small_window(1, "12:00:00")
@@ -329,11 +330,34 @@ def test_settings_roundtrip(tmp_path):
     s = config.Settings(brightness=55, pulse_ms=80, active_profile="lmu")
     s.auto_detect = {"lmu": ["MyGame"]}
     s.api.port = 9999
+    s.override_expiry = "timed"
+    s.override_seconds = 300
     path = tmp_path / "settings.yaml"
     s.save(path)
     back = config.Settings.load(path)
     assert back.brightness == 55 and back.pulse_ms == 80 and back.active_profile == "lmu"
     assert back.auto_detect == {"lmu": ["MyGame"]} and back.api.port == 9999
+    assert back.override_expiry == "timed" and back.override_seconds == 300
+
+
+def test_legacy_status_strip_migrates_to_widgets(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    sk = str(config.protocol.STATUS_KEY_INDEX)
+    for raw, want in (({"status": "clock"}, "clock"), ({"status": "load"}, "sysload"),
+                      ({"clock": False}, "sysload")):
+        config.write_profile_dict("p", {"keys": {sk: raw}})
+        b = config.load_profile("p").page(0).keys[config.protocol.STATUS_KEY_INDEX]
+        assert b.get("widget") == want and "status" not in b and "clock" not in b
+
+    config.write_profile_dict("p", {"keys": {sk: {"status": "off", "label": "x"}}})
+    assert config.load_profile("p").page(0).keys[13] == {"status": "off", "label": "x"}   # untouched
+
+
+def test_settings_override_defaults_and_validation():
+    assert config.Settings().override_expiry == "sticky"
+    bad = config.Settings.from_raw({"override": {"expiry": "nonsense", "seconds": 5}})
+    assert bad.override_expiry == "sticky"       # unknown -> default
+    assert bad.override_seconds == 30            # clamped up
 
 
 def test_stale_lmu_hint_migrates_on_load(tmp_path):

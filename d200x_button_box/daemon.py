@@ -28,6 +28,7 @@ _DETECT_POLL = 3.0     # seconds between game-process scans
 _RECONNECT_POLL = 2.0  # seconds between device reconnect attempts
 _GSYNC_POLL = 3.0      # seconds between live game-label syncs (linked game running)
 _WIDGET_POLL = 1.0     # seconds between widget-cell re-render checks
+_OVERRIDE_NOGAME_GRACE = 15.0   # 'game_close' override: seconds of no game before it drops
 
 
 class Daemon:
@@ -44,6 +45,9 @@ class Daemon:
         self._queued_profile: str | None = None      # profile: binding, applied next tick
         self._queued_page: str | None = None         # page: binding, applied next tick
         self._home_revert_at: float | None = None     # monotonic deadline to drop back to auto
+        self._override_at: float | None = None         # monotonic time a manual override was set
+        self._override_saw_game = False                # 'game_close': a game ran during this override
+        self._nogame_since: float | None = None        # 'game_close': since when nothing is detected
         self._reload_now = False
         self._repush = False
         self._wake_ui = False                     # a UI mutation asked the deck to wake
@@ -377,7 +381,9 @@ class Daemon:
     def _tick_sleep(self, now: float, game_running: bool) -> None:
         """Dark the screens after `idle_sleep_seconds` with no deck input. A
         running game (auto-detected) counts as activity -- you glance at the
-        deck mid-race without pressing anything."""
+        deck mid-race without pressing anything -- so the deck stays lit as long
+        as a game is up. When the game closes, detection clears and the idle
+        countdown starts."""
         idle = self.settings.idle_sleep_seconds
         if game_running:
             self._last_activity = now
@@ -399,6 +405,8 @@ class Daemon:
         if not self._asleep:
             return
         self._asleep = False
+        if self.dev is None:
+            return                      # reconnect will restore brightness + layout
         b = self.settings.brightness
         try:
             self.dev.set_brightness(80 if b is None else b)
@@ -408,19 +416,26 @@ class Daemon:
         self.push_layout(force=True)
         log.info("deck awake")
 
+    def _nudge_awake(self) -> None:
+        """A deliberate profile / page / showcase change is activity: wake the
+        screen and restart the idle countdown so an API or CLI switch never
+        lands on a dark deck."""
+        self._last_activity = time.monotonic()
+        self._wake()
+
     # --- deck layout -----------------------------------------------------
     def _status_mode(self) -> str:
-        """What the wide status strip shows: 'clock' | 'load' | 'off' (own icon /
-        widget -- firmware overlay disabled, we render the cell)."""
-        from . import protocol, widgets
+        """The wide strip: 'off' (we render the cell -- a widget or the key's own
+        icon; default) or the legacy firmware overlay 'clock' / 'load', kept only
+        for hand-written configs (`config._migrate_status_key` retires it on load)."""
+        from . import protocol
 
         b = self.page.keys.get(protocol.STATUS_KEY_INDEX, {})
-        if widgets.is_widget(b):
-            return "off"
-        m = b.get("status")
-        if m in ("clock", "load", "off"):
-            return m
-        return "load" if b.get("clock") is False else "clock"
+        if b.get("status") in ("clock", "load"):
+            return b["status"]
+        if b.get("clock") is False:
+            return "load"
+        return "off"
 
     def _sysload(self) -> tuple[int, int, int]:
         """(cpu%, mem%, gpu%) from /proc for the status strip's load mode."""
@@ -428,13 +443,37 @@ class Daemon:
         return widgets.sysload()
 
     # --- live cell widgets ------------------------------------------------
-    def _tick_widgets(self, now: float) -> None:
+    def _widget_state(self, now: float, detected: str | None) -> dict:
+        """What the `widget: deck` cell shows -- daemon runtime state."""
+        from . import games
+
+        idle = self.settings.idle_sleep_seconds
+        if self._asleep:
+            sleep = "asleep"
+        elif detected:
+            sleep = "awake · game"
+        elif not idle:
+            sleep = "no auto-sleep"
+        else:
+            left = int(max(0, idle - (now - self._last_activity)))
+            sleep = f"sleeps {left}s" if left <= 90 else f"sleeps {round(left / 60)}m"
+        g = games.get(detected) if detected else None
+        return {
+            "game": (g.label if g else detected),
+            "override": self.store._forced_profile,
+            "showcase": self._showcase,
+            "auto": bool(self.settings.auto_detect),
+            "sleep": sleep,
+        }
+
+    def _tick_widgets(self, now: float, detected: str | None = None) -> None:
         """Re-render `widget:` cells on their interval; push the changed ones in
         place (partial update, no deck blank)."""
         if self.dev is None:
             return
         from . import layout, widgets
 
+        widgets.STATE = self._widget_state(now, detected)
         page = self.page
         dirty: list[int] = []
         for idx in layout.widget_cells(page):
@@ -497,6 +536,7 @@ class Daemon:
         self._release_all()
         self._widget_at.clear(); self._widget_png.clear()
         self.push_layout()
+        self._nudge_awake()
         log.info("page %d/%d", self._page + 1, n)
         self._publish({"type": "page", "index": self._page, "n_pages": n})
 
@@ -508,12 +548,47 @@ class Daemon:
             log.warning("profile %r does not exist; ignored", name)
             return
         self.store.force_profile(name)
+        self._override_at = time.monotonic() if name is not None else None
+        self._override_saw_game = False
+        self._nogame_since = None
         if self.store.resolve():
+            self._activate()
+        self._nudge_awake()
+
+    def _tick_override(self, now: float, detected: str | None) -> None:
+        """Auto-clear a manual profile override per `settings.override.expiry`:
+        `sticky` never, `timed` after `override.seconds`, `game_close` once the
+        game that was running during the override has exited."""
+        if self.store._forced_profile is None:
+            self._override_at = self._nogame_since = None
+            self._override_saw_game = False
+            return
+        mode = self.settings.override_expiry
+        if mode == "timed":
+            if self._override_at is not None and now - self._override_at > self.settings.override_seconds:
+                self._clear_override("timed out", detected)
+        elif mode == "game_close":
+            if detected is not None:
+                self._override_saw_game = True
+                self._nogame_since = None
+            elif self._override_saw_game:
+                self._nogame_since = self._nogame_since or now
+                if now - self._nogame_since > _OVERRIDE_NOGAME_GRACE:
+                    self._clear_override("game closed", detected)
+
+    def _clear_override(self, reason: str, detected: str | None) -> None:
+        log.info("manual profile override cleared (%s)", reason)
+        self._override_at = self._nogame_since = None
+        self._override_saw_game = False
+        self.store.force_profile(None)
+        if self.store.resolve(detected=detected):
             self._activate()
 
     def _go_home(self) -> None:
         home = self.settings.home
         self.set_profile(home.profile)
+        self._override_at = self._nogame_since = None   # home has its own revert timer
+        self._override_saw_game = False
         self._home_revert_at = (
             time.monotonic() + home.revert_seconds if home.revert_seconds > 0 else None
         )
@@ -590,6 +665,7 @@ class Daemon:
         log.info("showcase %s (config: %s)", "ON" if self._showcase else "off", config.CONFIG_DIR)
         self._publish({"type": "showcase", "on": self._showcase})
         self._activate()
+        self._nudge_awake()
 
     # --- main loop -----------------------------------------------------
     def run(self) -> None:
@@ -610,6 +686,7 @@ class Daemon:
         log.info("running (profile: %s) -- ctrl-c to quit", self.store.active_name)
 
         self._last_beat = last_reload = last_detect = last_conn = last_gsync = last_widgets = 0.0
+        self._last_activity = time.monotonic()   # start the idle countdown from now, not epoch
         detected: str | None = None
 
         while self._run:
@@ -639,7 +716,7 @@ class Daemon:
                     self._tick_sleep(now, game_running=bool(detected))
                     if not self._asleep and now - last_widgets > _WIDGET_POLL:
                         last_widgets = now
-                        self._tick_widgets(now)
+                        self._tick_widgets(now, detected)
 
                     if self.settings.heartbeat_seconds and now - self._last_beat > self.settings.heartbeat_seconds:
                         m = self._status_mode()
@@ -665,6 +742,9 @@ class Daemon:
                 detected = None if self._showcase else gamedetect.detect(
                     self.settings.auto_detect, self.settings.games)
                 last_detect = now
+                self._tick_override(now, detected)   # may clear the manual override
+                from . import widgets
+                widgets.STATE = self._widget_state(now, detected)   # keep the deck-status widget / preview fresh
             if now - last_gsync > _GSYNC_POLL:
                 self._sync_game_labels()
                 last_gsync = now

@@ -122,6 +122,17 @@ header .spacer { flex: 1; }
 }
 #showcaseBar span { flex: 1; }
 
+#overrideBar[hidden] { display: none; }
+#overrideBar {
+  display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-4);
+  background: rgba(139, 149, 163, .16);
+  border-bottom: 1px solid var(--box);
+  font-size: var(--fs-xs);
+  position: sticky; top: 0; z-index: 18;
+}
+#overrideBar span { flex: 1; }
+
 /* ---- workspace: [rail] deck (hero) [editor] --------------------- */
 .workspace {
   display: grid;
@@ -261,6 +272,7 @@ header .spacer { flex: 1; }
   font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em;
   color: var(--text-dim); margin-bottom: var(--sp-2);
 }
+.fld[hidden] { display: none; }
 .fld { display: grid; grid-template-columns: 5.5rem 1fr; gap: var(--sp-2); align-items: center; margin: var(--sp-2) 0; }
 .fld > label { color: var(--text-dim); }
 .fld .hint { grid-column: 2; font-size: var(--fs-xs); color: var(--text-dim); margin-top: -2px; }

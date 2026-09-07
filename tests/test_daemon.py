@@ -449,6 +449,77 @@ def test_ui_change_wakes_deck_when_enabled():
     assert d._asleep
 
 
+def test_manual_profile_switch_wakes_a_sleeping_deck(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    config.save_profile(config.default_profile("a"))
+    config.save_profile(config.default_profile("b"))
+    d, _ = _daemon(settings=config.Settings(pulse_ms=10, idle_sleep_seconds=60, brightness=70))
+    d.dev = FakeDev()
+    d._sleep()
+    assert d._asleep
+
+    d.set_profile("b")                          # API/CLI switch onto a dark deck
+    assert not d._asleep and d.dev.bright[-1] == 70
+    assert d.store.active_name == "b"
+
+
+def test_manual_override_expiry_modes(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    config.save_profile(config.default_profile("home"))
+    config.save_profile(config.default_profile("mine"))
+
+    def locked(expiry, seconds=100):
+        s = config.Settings(pulse_ms=10, active_profile="home",
+                            override_expiry=expiry, override_seconds=seconds)
+        d, _ = _daemon(settings=s)
+        d.dev = FakeDev()
+        d.set_profile("mine")
+        assert d.store._forced_profile == "mine"
+        return d
+
+    d = locked("sticky")
+    d._tick_override(1e9, detected=None)
+    assert d.store._forced_profile == "mine"            # never clears itself
+
+    d = locked("timed", seconds=100)
+    d._override_at = 0.0
+    d._tick_override(50.0, detected=None)
+    assert d.store._forced_profile == "mine"
+    d._tick_override(150.0, detected=None)
+    assert d.store._forced_profile is None and d.store.active_name == "home"
+
+    d = locked("game_close")
+    d._tick_override(10.0, detected="lmu")              # a game is up -> held
+    assert d.store._forced_profile == "mine"
+    d._tick_override(20.0, detected=None)               # game gone -> grace running
+    assert d.store._forced_profile == "mine"
+    d._tick_override(40.0, detected=None)               # grace elapsed
+    assert d.store._forced_profile is None
+
+
+def test_widget_state_reports_daemon_status():
+    d, _ = _daemon(settings=config.Settings(pulse_ms=10, idle_sleep_seconds=60,
+                                            auto_detect={"lmu": ["x"]}))
+    d._last_activity = 100.0
+    assert d._widget_state(now=130.0, detected=None)["sleep"] == "sleeps 30s"   # counts down
+    assert d._widget_state(now=130.0, detected="lmu") == \
+        {"game": "LMU", "override": None, "showcase": False, "auto": True, "sleep": "awake · game"}
+
+    d.store.force_profile("mine")
+    d._asleep = True
+    st = d._widget_state(now=200.0, detected=None)
+    assert st["override"] == "mine" and st["sleep"] == "asleep" and st["game"] is None
+
+
+def test_wake_survives_a_disconnected_device():
+    d, _ = _daemon(settings=config.Settings(pulse_ms=10, idle_sleep_seconds=60))
+    d.dev = FakeDev()
+    d._sleep()
+    d.dev = None                                # USB drop while asleep
+    d._nudge_awake()                            # must not raise
+    assert not d._asleep
+
+
 def test_showcase_sandbox_is_a_separate_isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(config, "SETTINGS_PATH", tmp_path / "settings.yaml")
@@ -526,4 +597,4 @@ def test_sysload_and_status_mode():
     d.page.keys[sk] = {"status": "off"}
     assert d._status_mode() == "off"
     d.page.keys[sk] = {}
-    assert d._status_mode() == "clock"         # default
+    assert d._status_mode() == "off"           # default: we render the strip now

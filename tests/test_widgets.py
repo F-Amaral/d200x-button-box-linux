@@ -30,6 +30,19 @@ def test_render_clock_and_sysload_and_shell():
     assert png                                   # renders "err", never raises
 
 
+def test_render_deck_status():
+    widgets.STATE = {"game": "LMU", "auto": True, "sleep": "sleeps 37s"}
+    png = widgets.render({"widget": "deck"}, (196, 196), dict(layout.DEFAULT_NAV_STYLE))
+    assert png and Image.open(io.BytesIO(png)).size == (196, 196)
+
+    assert widgets._deck_lines({"game": "LMU", "auto": True, "sleep": "sleeps 37s"}) == \
+        ["LMU", "auto", "sleeps 37s"]
+    assert widgets._deck_lines({"override": "drift", "sleep": "awake · game"}) == \
+        ["— no game —", "manual: drift", "awake · game"]
+    assert widgets._deck_lines({"showcase": True, "sleep": "no auto-sleep"})[1:] == ["showcase", "no auto-sleep"]
+    assert widgets._deck_lines({}) == ["— no game —", "auto off", "—"]   # empty STATE is safe
+
+
 def _cells(payload):
     z = zipfile.ZipFile(io.BytesIO(payload))
     return set(json.loads(z.read("manifest.json")))

@@ -9,9 +9,11 @@ rotates with `device.orientation` like any other icon.
       13: {widget: clock}                          # replaces the firmware status clock
       3:  {widget: sysload}                         # CPU / RAM bars
       4:  {widget: shell, cmd: "cat /x", interval: 5, unit: "%"}
+      5:  {widget: deck}                            # detected game / switching mode / sleep
 
-Providers are pure `render(binding, size, style) -> png | None`. `interval()`
-says how often the daemon should re-check.
+Providers are pure `render(binding, size, style) -> png | None` except `deck`,
+which reads `STATE` (the daemon refreshes it each tick). `interval()` says how
+often the daemon should re-check.
 """
 
 from __future__ import annotations
@@ -19,7 +21,10 @@ from __future__ import annotations
 import subprocess
 import time
 
-KINDS = ("clock", "sysload", "shell")
+KINDS = ("clock", "sysload", "shell", "deck")
+
+# daemon runtime state for `widget: deck`, refreshed each tick by Daemon._tick_widgets
+STATE: dict = {}
 
 
 def is_widget(binding: dict | None) -> str | None:
@@ -38,6 +43,8 @@ def interval(binding: dict) -> float:
         return 2.0
     if kind == "shell":
         return max(1.0, float(binding.get("interval", 5)))
+    if kind == "deck":
+        return 1.0          # the sleep countdown ticks per second
     return 5.0
 
 
@@ -91,7 +98,22 @@ def render(binding: dict, size: tuple[int, int] | None, style: dict) -> bytes | 
             txt = "err"
         return _text_tile(txt[:8], style, size)
 
+    if kind == "deck":
+        return _lines_tile(_deck_lines(STATE), style, size)
+
     return None
+
+
+def _deck_lines(st: dict) -> list[str]:
+    """3 lines: detected game / switching mode / sleep state."""
+    game = st.get("game") or "— no game —"
+    if st.get("showcase"):
+        mode = "showcase"
+    elif st.get("override"):
+        mode = "manual: " + str(st["override"])
+    else:
+        mode = "auto" if st.get("auto") else "auto off"
+    return [game, mode, st.get("sleep") or "—"]
 
 
 def _text_tile(text: str, style: dict, size: tuple[int, int] | None) -> bytes:
@@ -113,6 +135,33 @@ def _text_tile(text: str, style: dict, size: tuple[int, int] | None) -> bytes:
     box = d.textbbox((0, 0), text, font=font)
     d.text(((W - (box[2] - box[0])) / 2 - box[0], (H - (box[3] - box[1])) / 2 - box[1]),
            text, font=font, fill=s["fg"])
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _lines_tile(lines: list[str], style: dict, size: tuple[int, int] | None) -> bytes:
+    """Several small left-aligned lines -- for the deck-state widget."""
+    import io
+
+    from . import layout
+
+    Image, ImageDraw, _ = layout._pil()
+    s = layout.merge_style(style)
+    W, H = size or (layout.ICON_SIZE, layout.ICON_SIZE)
+    lines = lines or [""]
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    pad = round(min(W, H) * 0.1)
+    fs = max(8, round((H - 2 * pad) / len(lines) * 0.78))
+    for _ in range(6):
+        font = layout._text_font(s["font"], fs)
+        if max(d.textlength(t, font=font) for t in lines) <= W - 2 * pad:
+            break
+        fs = max(8, round(fs * 0.85))
+    row_h = (H - 2 * pad) / len(lines)
+    for i, t in enumerate(lines):
+        d.text((pad, pad + i * row_h + (row_h - fs) / 2), t, font=font, fill=s["fg"])
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

@@ -93,10 +93,16 @@ hold_ms: 500             # press time that counts as a hold, not a tap
 
 active_profile: example   # used when nothing else selects a profile
 
+override:                 # when a hand-picked profile gives auto-detect back
+  expiry: sticky          #   sticky = never (until you pick auto)
+                          #   game_close = when the game you were in exits
+                          #   timed = after `seconds`
+  seconds: 900
+
 auto_detect:              # profile -> case-insensitive substrings in /proc/*/cmdline
-  lmu: [Le Mans Ultimate]   # a substring of the running exe / its Steam folder
-  ac: [acs.exe]
-  ac_rally: [acr.exe, Assetto Corsa Rally]
+  lmu: [Le Mans Ultimate]   # matched as a path component next to a launched .exe
+  ac: [acs.exe]             # (so a lingering helper or a shell command that just
+  ac_rally: [acr.exe, Assetto Corsa Rally]   # mentions the game doesn't count)
 
 games:                    # game -> install folder, for import / bind-to-game
   lmu: /path/to/Le Mans Ultimate   # auto-filled from your Steam libraries
@@ -122,10 +128,18 @@ api:
 The daemon picks a profile in this order:
 
 1. **Manual override** — `d200x-buttonboxd --profile X`, a `{profile: X}`
-   binding, or the API. A `{profile: auto}` binding clears it.
-2. **Auto-detect** — the first profile whose `auto_detect` substrings match a
-   running process.
+   binding, the web UI's profile picker, or the API. Auto-detect is off while
+   it's active; it ends per `override.expiry` (default `sticky` — you pick
+   `auto`: the dropdown, `{profile: auto}`, or `POST /api/activate
+   {"profile":"auto"}`). While it's active the web UI shows a bar with a
+   **Resume auto-detect** button.
+2. **Auto-detect** — the profile whose `auto_detect` matches a running game; if
+   two match (one closing, one starting) the more recently launched one wins.
 3. **`active_profile`** in `settings.yaml`.
+
+Switching a profile from the web UI or CLI also wakes the deck if it had gone to
+sleep, so the change is visible immediately. A running game holds the deck awake;
+the idle-sleep countdown starts when the game closes and auto-detect clears.
 
 ## Mounting orientation
 
@@ -137,11 +151,10 @@ navigation exactly as you see them — key 0 is the top-left key from where you
 sit.
 
 Encoder turn direction is unchanged (spinning the device in its own plane keeps
-clockwise clockwise). The wide status strip is a fixed firmware element: it
-physically stays bottom-right, so at `180` it appears at your top-left, and its
-icon rotates but the firmware clock/load **text** can't — use status mode `off`
-with a custom icon if that bothers you. 90° / 270° aren't supported (the wide
-strip can't fit a portrait grid).
+clockwise clockwise). The wide status strip physically stays bottom-right, so at
+`180` it appears at your top-left; its content is a rendered cell (a widget or a
+custom icon) that rotates with everything else. 90° / 270° aren't supported (the
+wide strip can't fit a portrait grid).
 
 ## Profiles and pages
 
@@ -236,16 +249,18 @@ encoder **click on release**, so a click is always a pulse, never a hold — see
 
 ## Widgets (live cells)
 
-A `widget:` on a key is drawn by the daemon and refreshed in place — no
-firmware clock/stat overlay, so it rotates with `device.orientation` like any
-icon. It overrides the key's normal look; a `gamepad:`/`command:` on the same
-key still works when pressed.
+A `widget:` on any key — the wide status strip included — is drawn by the daemon
+and refreshed in place, so it rotates with `device.orientation` like any icon.
+It overrides the key's normal look; a `gamepad:`/`command:` on the same key
+still works when pressed. Same picker for every key: **Clock / System load /
+Shell output / Deck status**, or none (the key keeps its icon).
 
 ```yaml
 keys:
-  13: {widget: clock}                                 # replaces the firmware status clock
+  13: {widget: clock}                                 # a clock on the wide strip
   3:  {widget: sysload}                               # CPU · RAM bars
   4:  {widget: shell, cmd: "sensors ...", interval: 5, unit: "°C"}
+  5:  {widget: deck}                                   # what the daemon is doing
 ```
 
 | kind | shows | refresh |
@@ -253,10 +268,12 @@ keys:
 | `clock` | `HH:MM` | on the minute |
 | `sysload` | CPU / RAM bars (red ≥ 90 %) | 2 s |
 | `shell` | first stdout line of `cmd` + `unit` | `interval` seconds (default 5) |
+| `deck` | 3 lines — detected game (or `— no game —`) · switching mode (`auto` / `auto off` / `manual: <profile>` / `showcase`) · sleep (`sleeps Ns` counting down / `awake · game` / `no auto-sleep` / `asleep`) | 1 s |
 
-Set `icon_style` for colours/font. On the wide status key, pick "Clock —
-rendered" / "System load — rendered" in the editor. `mpris` / per-sim telemetry
-widgets are planned (see plans/icon-system.md).
+Set `icon_style` for colours/font. Legacy configs that used the firmware
+clock/load overlay on the status strip (`status: clock` / `status: load` /
+`clock: false`) are migrated to the matching widget on load. `mpris` / per-sim
+telemetry widgets are planned (see plans/icon-system.md).
 
 ## Key icons
 
