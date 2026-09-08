@@ -211,6 +211,12 @@ Any binding can carry a `hold:` for a second press-and-hold action:
 
 An LCD key can also take `label:` and icon fields — see **Key icons**.
 
+**Apply to other profiles** — in the key / encoder editor, "Apply to other
+profiles…" copies that control's binding into every other profile (page 1).
+Profiles that already use the control are left alone unless you tick
+*overwrite*; the dialog shows what each one currently has. There's no live
+"global" link — it's a one-time copy, so re-run it after adding a profile.
+
 ## Navigation
 
 The two round aux buttons are navigation by default, no binding needed.

@@ -459,6 +459,18 @@ blank (proven in `companion-surface-d200`). No hardware RE.
   hand-written legacy config working but nothing writes it. `device.heartbeat`
   modes 0/1 + `build_small_window` are now legacy-only.
 
+### Override bar stuck + "apply to other profiles" (2026-09-07) — DONE
+- The "Resume auto-detect" bar could stay after clearing the override: `set_profile`
+  / `_clear_override` only published a `profile` event when `resolve()` changed the
+  *active* profile, so clearing an override that resolved to the same profile told
+  the UI nothing. Now `_publish_profile()` fires on any `force_profile` change. The
+  web UI also reads `forced` / `showcase` from the SSE `state` snapshot (sent on
+  every reconnect), and `#overrideClear` re-fetches state.
+- **Apply to other profiles** — editor dialog (`openGlobalize`): copy one key /
+  encoder binding into every other profile's page 1, fill empty slots, optional
+  overwrite (shows each profile's current value). Client-side: fetch each profile,
+  splice, PUT. No new "global" concept — one-time copy.
+
 ### Media / volume — DONE
 - `media.py` — shells to `wpctl` (or `pactl`) for default-sink volume/mute and
   `playerctl` for MPRIS transport + now-playing. No dep; each part no-ops if its

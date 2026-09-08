@@ -296,7 +296,14 @@ function connectSSE() {
   S.es = new EventSource("api/events" + (API_TOKEN ? "?token=" + encodeURIComponent(API_TOKEN) : ""));
   S.es.onmessage = e => {
     const m = JSON.parse(e.data);
-    if (m.type === "state") { setConn(true); setDeck(m.device.connected); }
+    if (m.type === "state") {
+      // sent on every (re)connect — the full snapshot, so stale indicators
+      // (override bar, showcase) can't get stuck after an SSE blip
+      setConn(true); setDeck(m.device.connected);
+      S.forced = m.profile?.forced || null; updateOverride();
+      S.showcase = !!m.showcase; updateShowcase();
+      if (m.profile && m.profile.name !== S.name && !S.dirty) loadProfile(m.profile.name);
+    }
     if (m.type === "device") setDeck(m.connected);
     if (m.type === "input") onInput(m);
     if (m.type === "showcase") { toast(m.on ? "Showcase sandbox — your config is untouched" : "Back to your config"); reloadData(); }
@@ -1151,12 +1158,93 @@ function renderEditor() {
     e.append(el("p", { class: "hint", textContent: "Encoder click fires on release (firmware) — always a short pulse." }));
   }
 
-  const clr = el("button", { class: "ghost danger", textContent: "clear this control", style: "margin-top:1rem" });
+  const acts = el("div", { style: "margin-top:1rem;display:flex;gap:.6rem;flex-wrap:wrap" });
+  const src = kind === "key" ? curPage().keys[index] : curPage().knobs[index];
+  if (S.profiles.length > 1 && controlBound(kind, src))
+    acts.append(Object.assign(el("button", { class: "ghost" }),
+      { textContent: "Apply to other profiles…", onclick: () => openGlobalize(kind, index) }));
+  const clr = el("button", { class: "ghost danger", textContent: "clear this control" });
   clr.onclick = () => {
     if (kind === "key") delete curPage().keys[index]; else delete curPage().knobs[index];
     S.sel = null; render(); touched();
   };
-  e.append(clr);
+  acts.append(clr);
+  e.append(acts);
+}
+
+// -- "global" controls: copy one control's binding into every other profile,
+// filling empty slots (optionally overwriting occupied ones) --
+function controlBound(kind, node) {
+  if (!node) return false;
+  if (kind === "key") return actOf(node) !== "none" || !!node.widget;
+  return ["left", "right", "press"].some(s => node[s] && actOf(node[s]) !== "none");
+}
+function describeControl(kind, node) {
+  if (!controlBound(kind, node)) return "—";
+  if (kind === "key") return node.widget ? "widget: " + node.widget : shortVal(node);
+  return ["left", "right", "press"].filter(s => node[s] && actOf(node[s]) !== "none")
+    .map(s => (s === "press" ? "click" : s) + " " + shortVal(node[s])).join(" · ");
+}
+function page0(raw) { return raw.pages ? raw.pages[0] : raw; }
+
+async function openGlobalize(kind, index) {
+  const key = String(index);
+  const source = kind === "key"
+    ? cleanKey(JSON.parse(JSON.stringify(curPage().keys[index])))
+    : JSON.parse(JSON.stringify(curPage().knobs[index]));
+  const srcJSON = JSON.stringify(source);
+  const targets = S.profiles.filter(n => n !== S.name);
+  const raws = {};
+  await Promise.all(targets.map(async n => { raws[n] = await api("profiles/" + n).catch(() => null); }));
+
+  const dlg = el("dialog");
+  const label = kind === "key" ? keyName("key", index, curPage().keys[index]) : ("Encoder " + (KNOBS.indexOf(index) + 1));
+  const rows = el("div", { style: "display:flex;flex-direction:column;gap:.35rem;max-height:50vh;overflow:auto" });
+  const owBox = el("input", { type: "checkbox" });
+  const state = [];
+  for (const n of targets) {
+    const raw = raws[n];
+    const cur = raw ? (kind === "key" ? page0(raw).keys?.[key] : page0(raw).knobs?.[key]) : null;
+    const same = raw && JSON.stringify(kind === "key" ? cleanKey(cur || {}) : (cur || {})) === srcJSON;
+    const occupied = controlBound(kind, cur) && !same;
+    const cb = el("input", { type: "checkbox", checked: !occupied && !same && !!raw, disabled: !raw || same });
+    const note = same ? "already set" : (occupied ? "has: " + describeControl(kind, cur) : (raw ? "empty" : "unreadable"));
+    rows.append(el("label", { class: "prow", style: "display:flex;gap:.6rem;align-items:center" },
+      [cb, el("span", { style: "flex:1", textContent: n }), el("span", { class: "hint", textContent: note })]));
+    state.push({ n, raw, cb, occupied, same });
+  }
+  owBox.onchange = () => state.forEach(r => { if (r.occupied) { r.cb.disabled = !owBox.checked; r.cb.checked = owBox.checked; } });
+
+  const apply = el("button", { class: "primary", textContent: "Apply" });
+  apply.onclick = async () => {
+    apply.disabled = true;
+    let done = 0;
+    for (const r of state) {
+      if (!r.cb.checked || !r.raw) continue;
+      const p = page0(r.raw);
+      if (kind === "key") { p.keys = p.keys || {}; p.keys[key] = source; }
+      else { p.knobs = p.knobs || {}; p.knobs[key] = source; }
+      try {
+        await api("profiles/" + r.n, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(r.raw) });
+        done++;
+      } catch (e) { /* skip */ }
+    }
+    dlg.close(); dlg.remove();
+    toast(done ? `Applied to ${done} profile${done > 1 ? "s" : ""}` : "Nothing changed");
+  };
+  dlg.append(
+    el("h3", { textContent: `Apply “${label}” to other profiles` }),
+    el("p", { class: "hint", textContent: `Puts ${describeControl(kind, source)} on this control in the profiles you pick. Page 1 of each.` }),
+    rows,
+    el("label", { style: "display:flex;gap:.5rem;align-items:center;margin-top:.6rem;font-size:var(--fs-xs)" },
+      [owBox, "overwrite profiles that already use this control"]),
+    el("div", { class: "dlg-actions" }, [
+      Object.assign(el("button", { class: "ghost", textContent: "Cancel" }), { onclick: () => { dlg.close(); dlg.remove(); } }),
+      apply,
+    ]),
+  );
+  document.body.append(dlg);
+  dlg.showModal();
 }
 
 // ---- drawer (settings / profiles / import) ------------------
@@ -1887,8 +1975,12 @@ $("#showcaseExit").onclick = () => setShowcase(false);
 $("#showcaseDiscard").onclick = () => {
   if (confirm("Delete the showcase sandbox and everything in it?")) setShowcase(false, true);
 };
-$("#overrideClear").onclick = () =>
-  api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: "auto" }) });
+$("#overrideClear").onclick = async () => {
+  await api("activate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profile: "auto" }) });
+  S.forced = null; updateOverride();                     // optimistic
+  try { const st = await api("state"); S.forced = st.profile.forced || null; } catch (e) {}
+  updateOverride();
+};
 
 // deck order for arrow-key navigation (follows the on-screen layout)
 const deckOrder = () => STRIP_BELOW

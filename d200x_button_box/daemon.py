@@ -556,6 +556,8 @@ class Daemon:
         self._nogame_since = None
         if self.store.resolve():
             self._activate()
+        else:
+            self._publish_profile()   # forced changed even if the active profile didn't
         self._nudge_awake()
 
     def _tick_override(self, now: float, detected: str | None) -> None:
@@ -586,6 +588,8 @@ class Daemon:
         self.store.force_profile(None)
         if self.store.resolve(detected=detected):
             self._activate()
+        else:
+            self._publish_profile()
 
     def _go_home(self) -> None:
         home = self.settings.home
@@ -633,12 +637,7 @@ class Daemon:
             return
         self.set_profile(spec)
 
-    def _activate(self) -> None:
-        self._page = 0
-        self._release_all()
-        self._widget_at.clear(); self._widget_png.clear()   # widgets belong to a page
-        self.push_layout()
-        log.info("active profile: %s (%d page(s))", self.store.active_name, self.profile.n_pages)
+    def _publish_profile(self) -> None:
         self._publish({
             "type": "profile",
             "name": self.store.active_name,
@@ -646,6 +645,14 @@ class Daemon:
             "pages": [p.name for p in self.profile.pages],
             "forced": self.store._forced_profile,
         })
+
+    def _activate(self) -> None:
+        self._page = 0
+        self._release_all()
+        self._widget_at.clear(); self._widget_png.clear()   # widgets belong to a page
+        self.push_layout()
+        log.info("active profile: %s (%d page(s))", self.store.active_name, self.profile.n_pages)
+        self._publish_profile()
 
     def _switch_config(self) -> None:
         """Repoint the whole app at the sandbox tree (or back at the real one)

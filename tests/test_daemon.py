@@ -477,6 +477,21 @@ def test_manual_profile_switch_wakes_a_sleeping_deck(tmp_path, monkeypatch):
     assert d.store.active_name == "b"
 
 
+def test_clearing_override_publishes_even_if_profile_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
+    config.save_profile(config.default_profile("only"))
+    d, _ = _daemon(settings=config.Settings(pulse_ms=10, active_profile="only"))
+    d.dev = FakeDev()
+    d.set_profile("only")                        # force the profile that's already active
+    assert d.store._forced_profile == "only"
+
+    events = []
+    d._subs.append(type("Q", (), {"put_nowait": lambda s, e: events.append(e)})())
+    d.set_profile(None)                          # "resume auto-detect"
+    assert d.store._forced_profile is None
+    assert any(e.get("type") == "profile" and e.get("forced") is None for e in events)
+
+
 def test_manual_override_expiry_modes(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PROFILES_DIR", tmp_path)
     config.save_profile(config.default_profile("home"))
