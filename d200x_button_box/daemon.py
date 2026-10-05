@@ -288,12 +288,16 @@ class Daemon:
                 return
             binding = knob.get("press" if ev.action == "press" else ev.action)
             if binding is not None:
+                if self._transition_blocks(binding):
+                    return
                 self._fire(binding, None)
             return
 
         binding = page.keys.get(ev.index) or self._nav_binding(ev.index)
         if binding is None:
             log.debug("unmapped key %s", ev.index)
+            return
+        if self._transition_blocks(binding):
             return
 
         if isinstance(binding.get("hold"), dict):
@@ -304,6 +308,15 @@ class Daemon:
                 self._fire({k: v for k, v in b.items() if k != "hold"}, None)
             return
         self._fire(binding, ev.action == "press")
+
+    def _transition_blocks(self, binding):
+        # While the display is changing, don't execute the new page's action
+        # against an old visible icon. Navigation remains available to queue
+        # the latest requested destination. Existing held outputs are released
+        # by set_page/_activate before uploading.
+        from .layout import is_nav_binding
+        return (getattr(self.dev, "layout_pending", False)
+                and not is_nav_binding(binding) and "nav" not in binding)
 
     def _tick_hold(self, now: float) -> None:
         if not self._pressed:
@@ -349,6 +362,11 @@ class Daemon:
             self.dev.send_init(self.page, self.settings.icon, orientation=self.settings.orientation)
             if self.settings.brightness is not None:
                 self.dev.set_brightness(self.settings.brightness)
+            # Initial handshake stays synchronous; subsequent complete commands
+            # share one writer, including heartbeat and widget updates.
+            start_writer = getattr(self.dev, "start_writer", None)
+            if start_writer:
+                start_writer()
         except DeviceGone:
             self._disconnect_device("failed right after opening")
             return False

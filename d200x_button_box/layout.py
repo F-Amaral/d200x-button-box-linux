@@ -16,8 +16,8 @@ Every LCD key gets an icon so the deck is never bare text on black:
 Style is layered: a baseline (settings.icon.game for action keys, .nav for
 navigation keys) <- page.style <- binding.icon_style.
 
-Firmware bug: the first byte of every raw 1024-byte chunk after the first must
-not be 0x00 or 0x7c; we retry the archive with a random dummy file until safe.
+Firmware bug: continuation packets must not start with 0x00 or 0x7c.
+Leading padding shifts the image data until packet boundaries are safe.
 """
 
 from __future__ import annotations
@@ -29,10 +29,58 @@ import logging
 import os
 import re
 import zipfile
+import threading
+from collections import OrderedDict
+from pathlib import Path
 
 from . import glyphs, protocol, telltales
 
 log = logging.getLogger(__name__)
+
+# Bounded, process-local caches. Configuration and asset fingerprints invalidate
+# entries without retaining mutable Page objects. Widget images are never cached.
+_CACHE_LOCK = threading.RLock()
+_ICON_CACHE = OrderedDict()
+_ZIP_CACHE = OrderedDict()
+_PAGE_CACHE = OrderedDict()
+_CACHE_LIMIT = 128
+
+
+def clear_caches():
+    with _CACHE_LOCK:
+        for cache in (_ICON_CACHE, _ZIP_CACHE, _PAGE_CACHE):
+            cache.clear()
+
+
+def _cached(cache, key, build):
+    with _CACHE_LOCK:
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+    value = build()
+    with _CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _CACHE_LIMIT:
+            cache.popitem(last=False)
+    return value
+
+
+def _asset_fingerprint(page):
+    from . import config
+    paths = [config.CONFIG_DIR / "action_icons.yaml"]
+    for directory in (config.user_icons_dir(), config.upload_icons_dir()):
+        paths.extend(sorted(directory.glob("*.png")))
+    if page is not None:
+        paths.extend(Path(b["icon"]) for b in page.keys.values() if b.get("icon"))
+    stamps = []
+    for path in paths:
+        try:
+            stat = path.stat()
+            stamps.append((str(path), stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            stamps.append((str(path), None, None))
+    return (str(config.CONFIG_DIR), tuple(stamps))
 
 ICON_SIZE = 196
 
@@ -313,11 +361,15 @@ def build_manifest(icons: dict[int, bytes], orientation: int = 0,
 def _archive(manifest: bytes, files: dict[str, bytes], dummy: bytes) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-        z.writestr("manifest.json", manifest)
-        for name, data in files.items():
-            z.writestr(name, data)
+        def write(name, data):
+            # Stable timestamps make payload identity independent of wall time.
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            z.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
         if dummy:
-            z.writestr("dummy.txt", dummy)
+            write("dummy.txt", dummy)
+        write("manifest.json", manifest)
+        for name, data in files.items():
+            write(name, data)
     return buf.getvalue()
 
 
@@ -348,17 +400,32 @@ def build_set_buttons(page=None, icon_cfg: dict | None = None, orientation: int 
     mounted (0 or 180). `only` restricts the manifest to those cells -- a
     **partial** update (`CMD_PARTIAL_UPDATE`), which re-renders just those cells
     without blanking the deck."""
-    from . import orient
+    from . import orient, widgets
 
     icon_cfg = icon_cfg or {}
     game_base = merge_style(DEFAULT_GAME_STYLE, icon_cfg.get("game"))
     nav_base = merge_style(DEFAULT_NAV_STYLE, icon_cfg.get("nav"))
     indices = [i for i in _MANIFEST_INDICES if only is None or i in only]
+    assets = _asset_fingerprint(page)
+    page_key = (json.dumps({"keys": page.keys if page else {},
+                           "style": page.style if page else {}, "icon": icon_cfg,
+                           "orientation": orientation, "indices": indices}, sort_keys=True), assets)
+    dynamic = page is not None and any(widgets.is_widget(page.keys.get(i, {})) for i in indices)
+    if not dynamic:
+        with _CACHE_LOCK:
+            if page_key in _PAGE_CACHE:
+                _PAGE_CACHE.move_to_end(page_key)
+                return _PAGE_CACHE[page_key]
 
     icons: dict[int, bytes] = {}
     if page is not None:
         for index in indices:
-            png = _cell_icon(page, index, game_base, nav_base)
+            binding = page.keys.get(index, {})
+            if widgets.is_widget(binding):
+                png = _cell_icon(page, index, game_base, nav_base)
+            else:
+                key = (json.dumps([index, binding, page.style, game_base, nav_base], sort_keys=True), assets)
+                png = _cached(_ICON_CACHE, key, lambda: _cell_icon(page, index, game_base, nav_base))
             if png:
                 icons[index] = png
 
@@ -366,11 +433,22 @@ def build_set_buttons(page=None, icon_cfg: dict | None = None, orientation: int 
     if deg:
         icons = {i: orient.rotate_png(p, deg) for i, p in icons.items()}
     manifest, files = build_manifest(icons, orientation, indices)
-    payload = _archive(manifest, files, b"")
-    tries = 0
-    while not _payload_safe(payload) and tries < 64:
-        tries += 1
-        payload = _archive(manifest, files, os.urandom(8 * tries).hex().encode())
+    key = (manifest, tuple((name, hashlib.blake2b(data, digest_size=16).digest()) for name, data in files.items()))
+    def build_archive():
+        payload = _archive(manifest, files, b"")
+        if _payload_safe(payload):
+            return payload
+        # Padding must precede the images; appending it cannot move earlier
+        # packet boundaries. Deterministic bytes preserve cache/dedup identity.
+        padding = hashlib.shake_256(manifest).digest(4096)
+        for attempt in range(1, 257):
+            payload = _archive(manifest, files, padding[:16 * attempt])
+            if _payload_safe(payload):
+                return payload
+        raise RuntimeError("Could not build a ZIP with safe HID packet boundaries")
+    payload = _cached(_ZIP_CACHE, key, build_archive)
+    if not dynamic:
+        _cached(_PAGE_CACHE, page_key, lambda: payload)
     return payload
 
 

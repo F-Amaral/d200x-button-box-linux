@@ -19,6 +19,9 @@ import os
 import re
 import select
 import time
+import copy
+import threading
+from collections import deque
 from collections.abc import Iterator
 
 from . import protocol
@@ -88,17 +91,114 @@ class Device:
                 "PHYSICALLY unplug/replug the deck."
             ) from e
         self.path = path
+        self._condition = threading.Condition()
+        self._pending = deque()
+        self._generation = 0
+        self._writer = None
+        self._writer_error = None
+        self._closing = False
+        self._active_kind = None
         log.info("opened %s (interface %s)", path, protocol.PROTOCOL_INTERFACE)
 
-    def _write(self, payload: bytes) -> None:
+    def start_writer(self) -> None:
+        """Opt in to asynchronous, serial command uploads (daemon only)."""
+        if self._writer is None:
+            self._writer = threading.Thread(target=self._writer_loop, name="d200x-usb", daemon=True)
+            self._writer.start()
+
+    def _check_writer(self):
+        if getattr(self, "_writer_error", None):
+            raise DeviceGone(str(self._writer_error))
+
+    @property
+    def layout_pending(self):
+        if getattr(self, "_writer", None) is None:
+            return False
+        with self._condition:
+            return self._active_kind == "layout" or any(job[0] == "layout" for job in self._pending)
+
+    def _submit(self, kind, job, generation=None):
+        self._check_writer()
+        with self._condition:
+            if self._closing:
+                raise DeviceGone("USB writer is closing")
+            if kind == "layout":
+                self._generation += 1
+                generation = self._generation
+                # Latest requested page wins, but never interrupt a ZIP mid-send.
+                self._pending = deque(item for item in self._pending if item[0] not in ("layout", "partial"))
+            elif kind.startswith("control:"):
+                self._pending = deque(item for item in self._pending if item[0] != kind)
+            self._pending.append((kind, generation, job))
+            self._condition.notify()
+
+    def _writer_loop(self):
         try:
-            os.write(self._fd, payload)
-        except OSError as e:
-            if e.errno in _TRANSIENT:
+            while True:
+                with self._condition:
+                    self._condition.wait_for(lambda: self._pending or self._closing)
+                    if self._closing:
+                        return
+                    kind, generation, job = self._pending.popleft()
+                    if kind == "partial" and generation != self._generation:
+                        continue
+                    self._active_kind = kind
+                try:
+                    job()
+                except Exception as error:
+                    # Publish failure before idle, so waiters cannot mistake a
+                    # failed upload for a completed one.
+                    with self._condition:
+                        self._writer_error = error
+                        self._pending.clear()
+                    raise
+                finally:
+                    with self._condition:
+                        self._active_kind = None
+                        self._condition.notify_all()
+        except Exception as error:
+            with self._condition:
+                self._writer_error = error
+                self._pending.clear()
+                self._condition.notify_all()
+            log.exception("USB upload worker failed")
+        finally:
+            # The worker owns close so a blocked write cannot use a recycled fd.
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+
+    def wait_idle(self, timeout=5.0):
+        """Wait for queued uploads; useful for diagnostics and shutdown tests."""
+        if getattr(self, "_writer", None) is None:
+            return
+        with self._condition:
+            if not self._condition.wait_for(lambda: not self._pending and self._active_kind is None,
+                                           timeout=timeout):
+                raise TimeoutError("USB uploads did not finish")
+        self._check_writer()
+
+    def _write(self, payload: bytes) -> None:
+        if getattr(self, "_writer", None) is not None and threading.current_thread() is not self._writer:
+            command = int.from_bytes(payload[3:5], "big")
+            self._submit(f"control:{command}", lambda: self._write(payload))
+            return
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                count = os.write(self._fd, payload)
+                if count != len(payload):
+                    raise DeviceGone(f"short HID write: {count}/{len(payload)}")
                 return
-            raise DeviceGone(f"write: {e}") from e
+            except OSError as e:
+                if e.errno in _TRANSIENT and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                    continue
+                raise DeviceGone(f"write: {e}") from e
 
     def read_raw(self, timeout: float = 0.0) -> bytes | None:
+        self._check_writer()
         try:
             r, _, _ = select.select([self._fd], [], [], timeout)
         except OSError as e:
@@ -151,13 +251,23 @@ class Device:
         """
         from .layout import build_set_buttons
 
+        if getattr(self, "_writer", None) is not None and threading.current_thread() is not self._writer:
+            snapshot, style = copy.deepcopy(page), copy.deepcopy(icon_cfg)
+            self._submit("layout", lambda: self.send_init(snapshot, style, quiet, force, orientation))
+            return True  # accepted; the worker handles payload deduplication
+
+        started = time.perf_counter()
         payload = build_set_buttons(page, icon_cfg, orientation)
+        prepared = time.perf_counter()
         h = hashlib.blake2b(payload, digest_size=16).digest()
         if not force and h == getattr(self, "_layout_hash", None):
             return False
-        self._layout_hash = h
         for pkt in protocol.frame_packets(protocol.CMD_SET_BUTTONS, payload):
             self._write(b"\x00" + pkt)
+        self._layout_hash = h  # only remember a completely successful upload
+        log.info("layout upload: %d bytes, prepare %.1f ms, HID writes %.1f ms",
+                 len(payload), (prepared - started) * 1000,
+                 (time.perf_counter() - prepared) * 1000)
         if not quiet:
             log.info("sent SET_BUTTONS (%d-byte payload); input should now stream", len(payload))
         return True
@@ -167,6 +277,12 @@ class Device:
         """Re-render just `indices` in place (no full-screen blank). Requires a
         prior :meth:`send_init`."""
         from .layout import build_set_buttons
+
+        if getattr(self, "_writer", None) is not None and threading.current_thread() is not self._writer:
+            snapshot, cells, style = copy.deepcopy(page), tuple(indices), copy.deepcopy(icon_cfg)
+            self._submit("partial", lambda: self.push_partial(snapshot, cells, style, orientation),
+                         generation=self._generation)
+            return
 
         payload = build_set_buttons(page, icon_cfg, orientation, only=set(indices))
         for pkt in protocol.frame_packets(protocol.CMD_PARTIAL_UPDATE, payload):
@@ -183,6 +299,13 @@ class Device:
                 yield ev
 
     def close(self) -> None:
+        if getattr(self, "_writer", None) is not None:
+            with self._condition:
+                self._closing = True
+                self._pending.clear()
+                self._condition.notify_all()
+            self._writer.join(timeout=2.0)
+            return
         try:
             os.close(self._fd)
         except OSError:
