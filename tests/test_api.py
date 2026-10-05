@@ -275,6 +275,21 @@ def test_glyphs_endpoint(client):
     assert "seat_fore" in g["composed"]
 
 
+def test_glyphs_discover_png_added_after_first_request(client):
+    from PIL import Image
+
+    call, _ = client
+    _, before = call("GET", "/api/glyphs")
+    assert "custom_added_after_load" not in before["telltales"]
+    directory = config.user_icons_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (196, 196), "white").save(directory / "custom_added_after_load.png")
+    _, after = call("GET", "/api/glyphs")
+    assert "custom_added_after_load" in after["telltales"]
+    status, preview = call("GET", "/api/icon-preview?glyph=custom_added_after_load", raw=True)
+    assert status == 200 and preview.startswith(b"\x89PNG")
+
+
 def test_import_endpoint(client, tmp_path):
     import json as _json
 

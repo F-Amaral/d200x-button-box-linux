@@ -84,6 +84,18 @@ def test_unmapped_key_ignored():
     assert pad.events == []
 
 
+def test_layout_transition_blocks_actions_but_accepts_navigation():
+    d, pad = _daemon(keys={0: {"gamepad": 1}, 1: {"page": "next"}})
+    d.dev.layout_pending = True
+    d._on_event(InputEvent(0, "key", "press", b""))
+    assert not pad.events
+    d._on_event(InputEvent(1, "key", "press", b""))
+    assert d._queued_page == "next"
+    d.dev.layout_pending = False
+    d._on_event(InputEvent(0, "key", "press", b""))
+    assert pad.events == [("press", 1)]
+
+
 def test_momentary_key_pulses():
     d, pad = _daemon(keys={2: {"gamepad": 4, "momentary": True}})
     d._on_event(InputEvent(2, "key", "press", b""))

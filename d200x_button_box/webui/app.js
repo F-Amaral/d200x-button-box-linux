@@ -152,16 +152,19 @@ function registerOf(b) {
 // ---- load / save --------------------------------------------------
 async function boot() {
   GAMES = await api("games").catch(() => ({}));
-  GLYPHS = await api("glyphs").catch(() => GLYPHS);
-  COMPOSED_NAMES = new Set(GLYPHS.composed || []);
-  TELLTALE_SET = new Set(GLYPHS.telltales || []);
   await reloadData();
   connectSSE();
   maybeIntro();
 }
+async function refreshGlyphs() {
+  GLYPHS = await api("glyphs", { cache: "no-store" }).catch(() => GLYPHS);
+  COMPOSED_NAMES = new Set(GLYPHS.composed || []);
+  TELLTALE_SET = new Set(GLYPHS.telltales || []);
+}
 // re-pull everything that differs between the real config and the sandbox
 async function reloadData() {
   const st = await api("state"); setConn(true); setDeck(st.device.connected);
+  await refreshGlyphs();
   S.showcase = !!st.showcase;
   S.forced = st.profile.forced || null;
   const pl = await api("profiles"); S.profiles = pl.profiles; S.name = pl.active; S.profileGames = pl.games || {};
@@ -1003,7 +1006,8 @@ function openFrame(kb, mode) {
 
 // ---- symbol picker -----------------------------------------
 let SYM_ONPICK = null, SYM_CUR = "";
-function openSymbolPicker(current, onPick) {
+async function openSymbolPicker(current, onPick) {
+  await refreshGlyphs();
   SYM_ONPICK = onPick; SYM_CUR = current || "";
   $("#sym_q").value = "";
   buildSymGrid("");
@@ -1816,6 +1820,7 @@ const C_NEW = {
   region: { type: "region", at: [0.25, 0.5], size: [0.5, 1], shape: "rect", color: "#4a9eff" },
 };
 async function openCompose(pick) {
+  await refreshGlyphs();
   C.all = await api("compose");
   const sel = $("#c_name"); sel.innerHTML = "";
   for (const n of Object.keys(C.all).sort())

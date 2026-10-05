@@ -76,6 +76,27 @@ If you installed with `pipx`/`--user` instead, plain `cp` (no `sed`) is enough.
 
 ## Troubleshooting
 
+### Page switching performance
+
+The daemon keeps bounded in-memory caches of static button images and prepared
+page ZIPs. First visits render the page; subsequent visits reuse the ZIP. Pages
+with widgets reuse their static images and render their live widget images
+afresh. Profile/style edits and uploaded/generated image changes invalidate
+the relevant entries. Restarting the daemon clears these caches.
+
+After the initial device handshake, a single USB worker prepares and uploads
+complete commands. Packets from different commands never interleave. If you
+navigate faster than the device can update, pending page uploads are replaced
+by the latest destination, and old-page widget updates are discarded.
+Navigation remains active during an upload; other button actions are suppressed
+during the transition to avoid applying new bindings to old visible icons.
+
+`journalctl --user -u d200x-button-box` includes layout preparation and HID write
+timings. Run `tools/benchmark-switching.py` with the application's interpreter
+for a repeatable benchmark; `--hardware` temporarily stops the service, sends
+each page, and restores the service and selected profile/page afterward.
+These timings measure host writes, not the firmware's final screen draw time.
+
 | Symptom | Fix |
 |--|--|
 | `no D200x hidraw node` | `lsusb` to confirm `2207:0019`; try a USB 2.0 port straight off the motherboard |
